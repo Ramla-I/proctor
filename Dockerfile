@@ -50,7 +50,7 @@ RUN git clone https://github.com/Yale-PROCTOR/c2rust \
 RUN rustup toolchain install -c rust-src,rustc-dev,llvm-tools-preview nightly-2025-06-23
 RUN git clone https://github.com/Yale-PROCTOR/crat \
  && cd crat \
- && git checkout d15a3ce \
+ && git checkout 3e4b29f \
  && cd deps_crate \
  && cargo build \
  && cd .. \
