@@ -47,29 +47,25 @@ RUN git clone https://github.com/Yale-PROCTOR/c2rust \
  && cargo build --release --bin c2rust-transpile -Z sparse-registry \
  && ln -s ~/c2rust/target/release/c2rust-transpile ~/local/bin
 
+COPY --chown=ubuntu:ubuntu Test-Corpus Test-Corpus
+COPY --chown=ubuntu:ubuntu aws-translate aws-translate
+RUN python3 aws-translate/scripts/package/package.py \
+      --root /home/ubuntu/Test-Corpus \
+      -o /home/ubuntu/bundles \
+      -s Public-Tests \
+      -m P00 \
+      -m P01
+RUN sed -i 's/nightly-2025-11-11/nightly-2025-06-23/g' Test-Corpus/rust-toolchain.toml
+
 RUN rustup toolchain install -c rust-src,rustc-dev,llvm-tools-preview nightly-2025-06-23
 RUN git clone https://github.com/Yale-PROCTOR/crat \
  && cd crat \
- && git checkout 3e4b29f \
+ && git checkout 9d7f6bc \
  && cd deps_crate \
  && cargo build \
  && cd .. \
- && cargo build --release --bin crat \
- && ln -s ~/crat/crat ~/local/bin
+ && cargo build --release \
+ && ln -s ~/crat/crat ~/local/bin \
+ && ln -s ~/crat/crat-merge ~/local/bin
 
-COPY --chown=ubuntu:ubuntu Test-Corpus Test-Corpus
-WORKDIR /home/ubuntu/Test-Corpus
-COPY --chown=ubuntu:ubuntu 0001-fixed.patch 0001-fixed.patch
-RUN git checkout 0319ab0 \
- && git apply 0001-fixed.patch \
- && rm 0001-fixed.patch
-
-COPY --chown=ubuntu:ubuntu \
-     add_link_args.py \
-     cdylib.py \
-     find_fns.py \
-     filter_files.py \
-     get_target.py \
-     translate.sh \
-     translate_all.py \
-     ./
+COPY --chown=ubuntu:ubuntu translate.py translate_all.py ./
