@@ -22,13 +22,3 @@ if [ ! -d "Python-3.14.0" ]; then
   tar xf Python-3.14.0.tgz
   rm Python-3.14.0.tgz
 fi
-
-if [ ! -d "Test-Corpus" ]; then
-  echo "Downloading Test-Corpus"
-  git clone https://github.com/DARPA-TRACTOR-Program/Test-Corpus
-fi
-
-if [ ! -d "aws-translate" ]; then
-  echo "Downloading aws-translate"
-  git clone https://github.com/DARPA-TRACTOR-Program/aws-translate
-fi

@@ -47,20 +47,24 @@ RUN git clone https://github.com/Yale-PROCTOR/c2rust \
  && cargo build --release --bin c2rust-transpile -Z sparse-registry \
  && ln -s ~/c2rust/target/release/c2rust-transpile ~/local/bin
 
+RUN rustup toolchain install nightly-2025-11-11
+RUN rustup toolchain install -c rust-src,rustc-dev,llvm-tools-preview nightly-2025-06-23
+
 COPY --chown=ubuntu:ubuntu Test-Corpus Test-Corpus
+COPY --chown=ubuntu:ubuntu PUBLIC-Test-Corpus PUBLIC-Test-Corpus
 COPY --chown=ubuntu:ubuntu aws-translate aws-translate
 RUN python3 aws-translate/scripts/package/package.py \
       --root /home/ubuntu/Test-Corpus \
       -o /home/ubuntu/bundles \
-      -s Public-Tests \
-      -m P00 \
-      -m P01
-RUN sed -i 's/nightly-2025-11-11/nightly-2025-06-23/g' Test-Corpus/rust-toolchain.toml
+      -s Public-Tests
+RUN python3 aws-translate/scripts/package/package.py \
+      --root /home/ubuntu/PUBLIC-Test-Corpus \
+      -o /home/ubuntu/PUBLIC-bundles \
+      -s Hidden-Tests
 
-RUN rustup toolchain install -c rust-src,rustc-dev,llvm-tools-preview nightly-2025-06-23
 RUN git clone https://github.com/Yale-PROCTOR/crat \
  && cd crat \
- && git checkout 9d7f6bc \
+ && git checkout 6bed6b6 \
  && cd deps_crate \
  && cargo build \
  && cd .. \
@@ -68,4 +72,5 @@ RUN git clone https://github.com/Yale-PROCTOR/crat \
  && ln -s ~/crat/crat ~/local/bin \
  && ln -s ~/crat/crat-merge ~/local/bin
 
-COPY --chown=ubuntu:ubuntu translate.py translate_all.py ./
+RUN rm -rf PUBLIC-Test-Corpus/Public-Tests
+COPY --chown=ubuntu:ubuntu scripts scripts
