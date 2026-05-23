@@ -1,6 +1,8 @@
 To build and run the container:
 
 ```bash
+git submodule init
+git submodule update
 ./download.sh
 docker build -t proctor:june2026 .
 docker run -it proctor:june2026
@@ -18,7 +20,7 @@ cd /home/ubuntu/PUBLIC-Test-Corpus && ./deployment/scripts/github-actions/run_ru
 
 ---
 
-To translate an individual test case:
+To translate a single test case:
 
 ```bash
 cd /home/ubuntu && \
@@ -27,7 +29,7 @@ cd /home/ubuntu && \
   Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/translated_rust
 ```
 
-To test an individual test case:
+To test a single test case:
 
 ```bash
 cd /home/ubuntu/Test-Corpus && \
