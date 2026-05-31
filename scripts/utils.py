@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import shlex
 import subprocess
@@ -191,6 +192,8 @@ def run(
 
     if result.returncode != 0:
         print(f"Command failed with {result.returncode}: {shlex.join(command)}")
+
+    if result.returncode != 0 or "VERBOSE" in os.environ:
         print("stdout:")
         print(stdout, end="" if stdout.endswith("\n") else "\n")
         print("stderr:")

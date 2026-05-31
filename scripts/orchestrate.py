@@ -85,14 +85,23 @@ def _build_parameter_sets(config_vars: dict[str, list[ParamVal]]) -> list[Parame
     return parameter_sets
 
 
+FIX_FLAGS: list[str] = [
+    "--workspace",
+    "--all-targets",
+    "--allow-no-vcs",
+    "--allow-dirty",
+]
+
+
 def _apply_fix(rust_dir: Path) -> None:
     stdout_log = rust_dir / "stdout.log"
     stderr_log = rust_dir / "stderr.log"
 
     for _ in range(10):
-        command = ["cargo", "fix", "--allow-no-vcs"]
+        command = ["cargo", "fix"]
+        command.extend(FIX_FLAGS)
         run(command, stdout_log=stdout_log, stderr_log=stderr_log, cwd=rust_dir)
-        command = ["cargo", "check"]
+        command = ["cargo", "check", "--workspace", "--all-targets"]
         result = run(
             command, stdout_log=stdout_log, stderr_log=stderr_log, cwd=rust_dir
         )
@@ -100,7 +109,8 @@ def _apply_fix(rust_dir: Path) -> None:
             break
 
     for _ in range(10):
-        command = ["cargo", "clippy", "--fix", "--allow-no-vcs"]
+        command = ["cargo", "clippy", "--fix"]
+        command.extend(FIX_FLAGS)
         result = run(
             command, stdout_log=stdout_log, stderr_log=stderr_log, cwd=rust_dir
         )
@@ -210,11 +220,10 @@ def orchestrate(archive_file: Path, dst_dir: Path) -> None:
             run(command, stdout_log=stdout_log, stderr_log=stderr_log)
 
             def make_feature(name: str, val: str) -> str:
-                # if val == "ON":
-                #     return name
-                # else:
-                #     return f"{name}_{val}"
-                return f"{name}_{val}"
+                if val == "ON":
+                    return name
+                else:
+                    return f"{name}_{val}"
 
             final_dir = workspace / tc_name
             cargo_toml_path = final_dir / "Cargo.toml"
@@ -224,7 +233,7 @@ def orchestrate(archive_file: Path, dst_dir: Path) -> None:
                 features = [
                     make_feature(name, val)
                     for name, val in parameters.items()
-                    # if val != "OFF"
+                    if val != "OFF"
                 ]
                 cargo_toml_features[f"{name}_config"] = features
                 cargo_toml_features[f"default"] = features
