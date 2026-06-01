@@ -64,7 +64,7 @@ RUN python3 aws-translate/scripts/package/package.py \
 
 RUN git clone https://github.com/Yale-PROCTOR/crat \
  && cd crat \
- && git checkout c175c6f \
+ && git checkout c9a756b \
  && cd deps_crate \
  && cargo build \
  && cd .. \
