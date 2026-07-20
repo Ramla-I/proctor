@@ -127,7 +127,17 @@ upstream) before any work starts.
 <exec...> --input /abs/.../stage_input.json --output /abs/.../stage_output.json
 ```
 
-- All paths in the envelope are absolute. Working directory is unspecified.
+Envelopes are always written by the orchestrator, never by hand — one pair
+per stage per test case. A stage is a single-case program; applying the
+pipeline to a whole corpus is the batch driver's job (`proctor bench`, M7),
+which fans out one pipeline run per case. This keeps checkpointing and
+failure isolation per-case, parallelism orchestrator-side, and stages free
+of job management. The files exist so any stage invocation can be
+reproduced or debugged in isolation with two flags.
+
+- All paths in the envelope are absolute. The orchestrator sets the working
+  directory to the stage root; stages must not rely on the working directory
+  for data paths.
 - Exit 0 with a schema-valid `stage_output.json` ⇒ success.
 - Nonzero exit, or exit 0 with missing/invalid output ⇒ stage failure.
 - The stage must not modify any input path. It creates its output project at the
@@ -577,7 +587,12 @@ results joined into `proctor report` to give accuracy-per-dollar. *~2 days.*
 
 **M7 — Batch driver.** `proctor bench -c cfg.toml --corpus <dir> --jobs N`:
 runs the pipeline across a corpus in parallel, one run dir per test case,
-aggregate report with per-stage pass rates and cost. *~2 days.*
+aggregate report with per-stage pass rates and cost. Resume re-runs only
+failed cases. Must decide a rule-set policy across cases (the one genuine
+cross-case coupling — rules are learned across programs): `independent`
+(clean experiments), `chained` (max learning, order-dependent, serializes
+local transformation), or `merge-per-round`; default `independent`, policy
+set in `[run]` config. *~2 days.*
 
 **M8 — Container packaging.** Framework Dockerfile (base deps + toolchains +
 `proctor warmup`), `PROCTOR_IMAGE` stamping into `run.json`, `docker run`
