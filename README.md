@@ -1,38 +1,23 @@
-To build and run the container:
+# PROCTOR Orchestration Framework
+
+Shared infrastructure for the PROCTOR C-to-Rust translation pipeline:
+a configurable pipeline orchestrator, vendor-agnostic LLM API, usage
+tracker, prompt library, and code-context retrieval.
+
+- Design and milestones: `plan_docs/orchestration_framework_implementation_plan.md`
+- Requirements docs: `plan_docs/`
+
+Pipeline stages are standalone programs in their own repositories,
+pinned as git submodules under `stages/`, and invoked through a JSON
+envelope contract (`docs/stage-contract.md`, from M1).
+
+## Development
 
 ```bash
-git submodule init
-git submodule update
-./download.sh
-docker build -t proctor:june2026 .
-docker run -it proctor:june2026
+uv sync --dev
+uv run pytest          # unit tests (fake stages, no toolchains)
+uv run pytest -m e2e   # CRAT smoke test (needs rustup; builds CRAT once)
 ```
 
-Inside the container, to translate all test cases and execute test vectors:
-
-```bash
-cd /home/ubuntu && ./scripts/orchestrate_all.py bundles Test-Corpus
-cd /home/ubuntu/Test-Corpus && ./deployment/scripts/github-actions/run_rust.sh --keep-going
-
-cd /home/ubuntu && ./scripts/orchestrate_all.py PUBLIC-bundles PUBLIC-Test-Corpus
-cd /home/ubuntu/PUBLIC-Test-Corpus && ./deployment/scripts/github-actions/run_rust.sh --keep-going
-```
-
----
-
-To translate a single test case:
-
-```bash
-cd /home/ubuntu && \
-./scripts/orchestrate.py \
-  bundles/Public-Tests/B01_synthetic/001_helloworld.tar.gz \
-  Test-Corpus/Public-Tests/B01_synthetic/001_helloworld/translated_rust
-```
-
-To test a single test case:
-
-```bash
-cd /home/ubuntu/Test-Corpus && \
-./deployment/scripts/github-actions/run_rust.sh \
-  -m '^Public-Tests/B01_synthetic/001_helloworld$'
-```
+The legacy translation scripts and container live on the `master`
+branch (`docker build -t proctor:june2026 .` there).
