@@ -30,7 +30,7 @@ packages = ["proctor"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-extend-exclude = ["stages/crat", "tests/e2e/fixtures"]
+extend-exclude = ["stages/crat", "stages/c2rust", "tests/e2e/fixtures"]
 
 [tool.mypy]
 python_version = "3.12"

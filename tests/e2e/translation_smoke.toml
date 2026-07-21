@@ -1,0 +1,28 @@
+# Full translation-component pipeline: C source → c2rust → CRAT →
+# tested Rust with proctor.toml.
+#
+#   uv run proctor run -c tests/e2e/translation_smoke.toml \
+#     --input-c tests/e2e/fixtures/001_helloworld/c \
+#     --tests   tests/e2e/fixtures/001_helloworld/tests
+
+[run]
+provides = ["c_project", "test_package"]
+
+# The gate stays OFF here: mid-component, the c2rust stage's output is a
+# library crate even for executable cases (the bin arrives with crat's
+# bin pass), so executing the artifact against run_test.sh would fail
+# spuriously. The e2e test verifies the FINAL project explicitly.
+# (Future refinement: per-stage gate flag.)
+[testing]
+after_each_stage = false
+
+[pipeline]
+order = ["c2rust", "crat"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 1800
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 3600

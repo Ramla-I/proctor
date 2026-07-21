@@ -4,9 +4,28 @@
 uv run pytest -m e2e
 ```
 
-Runs one public TRACTOR case (`001_helloworld`) through the real CRAT
-stage: orchestrator → crat pass chain → output builds → executable runs
-→ resume reuses the checkpoint.
+Runs one public TRACTOR case (`001_helloworld`) through the real
+pipeline stages:
+
+- **crat smoke** — crat pass chain over the vendored c2rust fixture,
+  test-package gate on, resume reuses the checkpoint;
+- **translation smoke** — full C source → c2rust → CRAT → tested Rust
+  with `proctor.toml`;
+- **index e2e** — builds `proctor-rust-index` and indexes the fixture.
+
+## c2rust-transpile resolution
+
+The c2rust stage looks for the transpiler in order:
+
+1. `c2rust-transpile` on `PATH`;
+2. a prebuilt under `$PROCTOR_CACHE_DIR/c2rust/bin` with its shared
+   libs in `$PROCTOR_CACHE_DIR/c2rust/lib` (extractable from the legacy
+   `proctor:june2026` image — binary plus `libLLVM-10.so.1`,
+   `libffi.so.7`, `libedit.so.2`, `libtinfo.so.6`, copied with
+   `docker cp -L`);
+3. built from the `stages/c2rust` submodule — needs clang/LLVM dev
+   packages (`apt install clang libclang-dev llvm-dev`), which the
+   framework container image includes.
 
 ## Requirements
 

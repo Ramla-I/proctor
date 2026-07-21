@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 STAGE_ID = "crat"
@@ -159,6 +160,39 @@ def run_pass(
     return produced
 
 
+def emit_proctor_toml(project: Path) -> dict:
+    """Write the project manifest (component spec §3), derived from
+    crat's config.toml and Cargo.toml. The crat stage is the last stage
+    of the Translation component, so this is where downstream stages'
+    proctor.toml is born — with an empty wrapper list.
+    """
+    config_file = project / "config.toml"
+    cfg: dict = {}
+    if config_file.is_file():
+        cfg = tomllib.loads(config_file.read_text(encoding="utf-8"))
+    exposed = [f for f in cfg.get("c_exposed_fns", []) if isinstance(f, str)]
+    bin_table = cfg.get("bin")
+    bin_name = bin_table.get("name") if isinstance(bin_table, dict) else None
+
+    if isinstance(bin_name, str) and bin_name:
+        kind, name, api = "executable", bin_name, []
+    else:
+        cargo = tomllib.loads((project / "Cargo.toml").read_text(encoding="utf-8"))
+        lib_table = cargo.get("lib")
+        lib_name = lib_table.get("name") if isinstance(lib_table, dict) else None
+        name = lib_name or cargo.get("package", {}).get("name", "unknown")
+        kind, api = "library", exposed
+
+    lines = [
+        f'target_kind = "{kind}"',
+        f'target_name = "{name}"',
+        f"api_functions = {json.dumps(api)}",
+        "wrappers = []",
+    ]
+    (project / "proctor.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"target_kind": kind, "target_name": name, "api_functions": len(api)}
+
+
 def run_stage(envelope: dict) -> dict:
     config = envelope.get("config", {})
     src = envelope["inputs"]["rust_project"]
@@ -202,6 +236,7 @@ def run_stage(envelope: dict) -> dict:
         pass_seconds[plugin] = round(time.monotonic() - started, 2)
 
     shutil.copytree(current, dst)
+    manifest = emit_proctor_toml(Path(dst))
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -214,6 +249,7 @@ def run_stage(envelope: dict) -> dict:
             "crat_commit": git_head(crat_dir),
             "build_s": build_s,
             "passes": len(chain),
+            **manifest,
             **{f"pass_s.{name}": secs for name, secs in pass_seconds.items()},
         },
         "logs": ["crat.log"],

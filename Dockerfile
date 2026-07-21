@@ -14,12 +14,17 @@ RUN apt-get update \
     build-essential \
     ca-certificates \
     clang \
+    cmake \
     curl \
     git \
     libclang-dev \
+    libssl-dev \
     libz3-dev \
+    llvm-dev \
+    ninja-build \
     pkg-config \
     python3 \
+    zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m proctor
@@ -35,9 +40,10 @@ COPY --chown=proctor:proctor . /home/proctor/proctor
 WORKDIR /home/proctor/proctor
 
 RUN uv sync
-# Warm everything: crat (pulls its pinned nightly via rust-toolchain.toml),
-# stage venvs, and the index crate.
-RUN uv run proctor warmup -c tests/e2e/crat_smoke.toml
+# Warm everything: c2rust-transpile (built from the submodule against
+# the image's LLVM), crat (pulls its pinned nightly via
+# rust-toolchain.toml), stage venvs, and the index crate.
+RUN uv run proctor warmup -c tests/e2e/translation_smoke.toml
 
 ARG PROCTOR_IMAGE=proctor-framework:dev
 ENV PROCTOR_IMAGE=${PROCTOR_IMAGE}
