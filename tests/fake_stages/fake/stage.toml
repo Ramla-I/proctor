@@ -1,0 +1,11 @@
+id = "fake"
+version = "0.1.0"
+description = "Configurable fake stage for orchestrator tests."
+
+exec = ["python3", "main.py"]
+
+[requires]
+rust_project = "required"
+
+[produces]
+rust_project = true

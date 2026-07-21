@@ -1,0 +1,3 @@
+[submodule "stages/crat"]
+	path = stages/crat
+	url = https://github.com/Yale-PROCTOR/crat

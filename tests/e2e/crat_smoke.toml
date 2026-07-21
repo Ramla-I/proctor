@@ -1,0 +1,15 @@
+# CRAT smoke test pipeline: one real symbolic stage over the vendored
+# c2rust output of Public-Tests/B01_synthetic/001_helloworld.
+#
+#   uv run proctor run -c tests/e2e/crat_smoke.toml \
+#     --input-rust tests/e2e/fixtures/001_helloworld/c2rust
+
+[run]
+provides = ["rust_project"]
+
+[pipeline]
+order = ["crat"]
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 3600

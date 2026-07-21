@@ -38,5 +38,5 @@ def test_missing_config_reports_error(
 
 
 def test_unimplemented_verb_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["run"]) == 2
-    assert "M2" in capsys.readouterr().out
+    assert main(["bench"]) == 2
+    assert "M7" in capsys.readouterr().out

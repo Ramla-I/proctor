@@ -1,0 +1,15 @@
+id = "crat"
+version = "0.1.0"
+description = "CRAT symbolic transformation passes over c2rust output."
+
+exec = ["python3", "main.py"]
+
+[requires]
+rust_project = "required"
+
+[produces]
+rust_project = true
+
+[config]
+final_pass = { type = "string", default = "bin", doc = "last pass of the chain to run" }
+crat_dir = { type = "string", default = "../crat", doc = "crat checkout, relative to this adapter" }
