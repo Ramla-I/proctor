@@ -71,6 +71,34 @@ the stages via `proctor warmup`, so containerized runs need zero host
 setup. Mount a volume over `/home/proctor/proctor/runs` to keep run
 directories. `PROCTOR_IMAGE` is stamped into each run's `run.json`.
 
+## Adding a stage
+
+A stage is a standalone program in its own repo — any language, any
+internal machinery (own LLM client, agent SDK, Claude Code) — that
+reads a `stage_input.json` and writes a `stage_output.json`:
+
+1. Start from the template: copy `stages/example-stage/` (or the
+   richer scaffold in the `abstraction_recovery` repo). Declare what
+   you consume/produce in `stage.toml`; pin your own dependencies in
+   your `pyproject.toml` (each stage gets an isolated venv).
+2. Pin it here: `git submodule add <url> stages/<name>`.
+3. Wire it into a config:
+
+   ```toml
+   [pipeline]
+   order = ["c2rust", "crat", "<name>"]
+   [stages.<name>]
+   uses = "stages/<name>"
+   [stages.<name>.config]
+   your_option = 3
+   ```
+
+4. Check the wiring: `uv run proctor validate -c <cfg>` — it rejects
+   the pipeline if a required artifact has no producer.
+
+Full walkthrough: `docs/writing-a-stage.md`; field-by-field envelope
+reference: `docs/stage-contract.md`.
+
 ## Development
 
 ```bash
