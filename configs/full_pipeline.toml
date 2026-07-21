@@ -23,6 +23,6 @@ timeout_s = 3600
 
 [stages.abstraction_recovery]
 uses = "stages/abstraction-recovery"
-enabled = false   # empty repo today; a contract scaffold awaits on its
-                  # local `stage-scaffold` branch — push it and flip this
+enabled = true    # scaffold merged; currently a well-behaved no-op
+                  # (no candidates -> skipped) until identify/transform land
 timeout_s = 3600
