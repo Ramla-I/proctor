@@ -1,0 +1,28 @@
+# The full default pipeline. Stages without an implementation yet are
+# declared but disabled — flip `enabled` as they land.
+#
+#   uv run proctor run -c configs/full_pipeline.toml \
+#     --input-c <case>/c --tests <case>/tests
+
+[run]
+provides = ["c_project", "test_package"]
+
+[testing]
+after_each_stage = false   # see tests/e2e/translation_smoke.toml note
+
+[pipeline]
+order = ["c2rust", "crat", "abstraction_recovery"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 1800
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 3600
+
+[stages.abstraction_recovery]
+uses = "stages/abstraction-recovery"
+enabled = false   # empty repo today; a contract scaffold awaits on its
+                  # local `stage-scaffold` branch — push it and flip this
+timeout_s = 3600

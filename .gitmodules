@@ -4,3 +4,6 @@
 [submodule "stages/c2rust"]
 	path = stages/c2rust
 	url = https://github.com/Yale-PROCTOR/c2rust
+[submodule "stages/abstraction-recovery"]
+	path = stages/abstraction-recovery
+	url = https://github.com/Yale-PROCTOR/abstraction_recovery
