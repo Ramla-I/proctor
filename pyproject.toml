@@ -3,13 +3,16 @@ name = "proctor"
 version = "0.1.0"
 description = "Orchestration framework for the PROCTOR C-to-Rust translation pipeline"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "tomli-w>=1.2.0",
+]
 
 [project.scripts]
 proctor = "proctor.cli:main"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     "mypy>=1.13",
     "pytest>=8",
     "ruff>=0.8",

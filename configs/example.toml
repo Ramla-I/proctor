@@ -1,0 +1,18 @@
+# Minimal working pipeline: the template stage copying a Rust project.
+# Try it:
+#   uv run proctor validate -c configs/example.toml
+#   uv run proctor stages   -c configs/example.toml
+
+[run]
+# This pipeline starts from an existing Rust project (e.g. the fixture
+# at tests/e2e/fixtures/001_helloworld/c2rust), not from a C project.
+provides = ["rust_project", "test_package"]
+
+[pipeline]
+order = ["example"]
+
+[stages.example]
+uses = "stages/example-stage"
+
+[stages.example.config]
+marker = "hello-from-config"

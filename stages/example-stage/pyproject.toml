@@ -1,0 +1,6 @@
+[project]
+name = "example-stage"
+version = "0.1.0"
+description = "Template proctor stage (stdlib only)"
+requires-python = ">=3.12"
+dependencies = []

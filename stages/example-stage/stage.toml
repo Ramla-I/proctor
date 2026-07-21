@@ -1,0 +1,20 @@
+id = "example"
+version = "0.1.0"
+description = "Template stage: copies the input Rust project unchanged."
+
+exec = ["python3", "main.py"]
+
+[requires]
+rust_project = "required"
+c_project = "unused"
+test_package = "optional"
+rule_set = "unused"
+
+[produces]
+rust_project = true
+rule_set = false
+
+# Optional documentation of the stage's config keys. The stage itself
+# validates its config; this table is for humans and generated docs.
+[config]
+marker = { type = "string", default = "", doc = "written into metrics to show config flow" }
