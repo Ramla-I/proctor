@@ -16,9 +16,7 @@ from proctor.config.model import PipelineConfig
 from proctor.orchestrator.run import RunError, RunResult, resume_run, start_run
 from proctor.orchestrator.validate import validate_pipeline
 
-_NOT_YET = {
-    "warmup": "M8",
-}
+_NOT_YET: dict[str, str] = {}
 
 #: artifact kind -> run flag
 _INPUT_FLAGS = {
@@ -194,6 +192,59 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_warmup(args: argparse.Namespace) -> int:
+    """Resolve stage venvs, run stage warmup commands, build the index
+    crate — so runs (and container image builds) start warm."""
+    import shutil as _shutil
+    import subprocess
+
+    config = _load_pipeline_config(args)
+    result, validated = validate_pipeline(config, args.root)
+    for error in result.errors:
+        print(f"error: {error}")
+    if not result.ok:
+        return 1
+
+    failed = False
+    for v in validated:
+        stage_dir = v.resolved.stage_dir
+        if (stage_dir / "pyproject.toml").is_file() and _shutil.which("uv"):
+            print(f"warmup {v.resolved.id}: uv sync")
+            sync = subprocess.run(
+                ["uv", "sync", "--project", str(stage_dir)],
+                capture_output=True,
+                text=True,
+            )
+            if sync.returncode != 0:
+                print(f"error: uv sync failed for {v.resolved.id}:\n{sync.stderr}")
+                failed = True
+        if v.manifest.warmup:
+            print(f"warmup {v.resolved.id}: {' '.join(v.manifest.warmup)}")
+            warm = subprocess.run(
+                list(v.manifest.warmup),
+                cwd=stage_dir,
+                capture_output=True,
+                text=True,
+            )
+            if warm.returncode != 0:
+                print(
+                    f"error: warmup failed for {v.resolved.id} "
+                    f"(exit {warm.returncode}):\n{warm.stderr[-2000:]}"
+                )
+                failed = True
+
+    if _shutil.which("cargo"):
+        from proctor.context.index import IndexError_, ensure_index_binary
+
+        print("warmup framework: building proctor-rust-index")
+        try:
+            ensure_index_binary()
+        except IndexError_ as exc:
+            print(f"error: {exc}")
+            failed = True
+    return 1 if failed else 0
+
+
 def _cmd_not_yet(verb: str, milestone: str) -> int:
     print(f"proctor {verb} arrives with {milestone}; not implemented yet.")
     return 2
@@ -263,6 +314,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument("--format", choices=["table", "csv", "json"], default="table")
     report.set_defaults(func=_cmd_report)
+
+    warmup = subparsers.add_parser(
+        "warmup", help="pre-build stage venvs, adapters, and the index crate"
+    )
+    _add_config_args(warmup)
+    warmup.set_defaults(func=_cmd_warmup)
 
     for verb, milestone in _NOT_YET.items():
         stub = subparsers.add_parser(verb, help=f"(arrives with {milestone})")

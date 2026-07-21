@@ -38,6 +38,7 @@ class StageManifest:
     requires: dict[str, Requirement] = field(default_factory=dict)
     produces: dict[str, bool] = field(default_factory=dict)
     config_docs: dict[str, Any] = field(default_factory=dict)
+    warmup: tuple[str, ...] | None = None  # optional pre-build command
 
     def requirement(self, kind: str) -> Requirement:
         """Requirement level for an artifact kind (default: unused)."""
@@ -108,6 +109,16 @@ class StageManifest:
         if not isinstance(config_docs, dict):
             raise StageManifestError(f"{source}: [config] must be a table")
 
+        warmup_raw = data.get("warmup")
+        if warmup_raw is not None and (
+            not isinstance(warmup_raw, list)
+            or not warmup_raw
+            or not all(isinstance(part, str) and part for part in warmup_raw)
+        ):
+            raise StageManifestError(
+                f"{source}: 'warmup' must be a non-empty array of strings"
+            )
+
         return cls(
             id=stage_id,
             version=version,
@@ -116,6 +127,7 @@ class StageManifest:
             requires=requires,
             produces=produces,
             config_docs=config_docs,
+            warmup=tuple(warmup_raw) if warmup_raw is not None else None,
         )
 
     @classmethod

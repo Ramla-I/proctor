@@ -222,11 +222,37 @@ def run_stage(envelope: dict) -> dict:
     }
 
 
+def build_only() -> int:
+    """Warmup entry point: build crat, no pipeline work."""
+    import os
+
+    adapter_dir = Path(__file__).resolve().parent
+    crat_dir = (adapter_dir / "../crat").resolve()
+    cache = Path(
+        os.environ.get("PROCTOR_CACHE_DIR", Path.home() / ".cache" / "proctor")
+    )
+    cache.mkdir(parents=True, exist_ok=True)
+    log_file = cache / "crat-build.log"
+    try:
+        binary = ensure_crat_built(crat_dir, log_file)
+    except StageFailure as exc:
+        print(f"crat build failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"crat ready: {binary}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--build-only", action="store_true")
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
+    if args.build_only:
+        return build_only()
+    if args.input is None or args.output is None:
+        parser.error("--input and --output are required unless --build-only")
 
     envelope = json.loads(args.input.read_text(encoding="utf-8"))
     try:

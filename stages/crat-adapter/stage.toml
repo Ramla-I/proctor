@@ -3,6 +3,7 @@ version = "0.1.0"
 description = "CRAT symbolic transformation passes over c2rust output."
 
 exec = ["python3", "main.py"]
+warmup = ["python3", "main.py", "--build-only"]
 
 [requires]
 rust_project = "required"
