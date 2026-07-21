@@ -207,3 +207,91 @@ def test_run_record_contents(tmp_path: Path) -> None:
     assert record["stages"][0]["fingerprint"]
     assert record["inputs"] == {"rust_project": "inputs/rust"}
     assert record["resolved_config_hash"]
+
+
+def test_testing_gate_blocks_failing_stage(tmp_path: Path, monkeypatch: Any) -> None:
+    from proctor.testing import runner as testing_runner
+    from proctor.testing.runner import TestResult
+
+    def fake_run_tests(project: Path, package: Path, **kwargs: Any) -> TestResult:
+        return TestResult(
+            build_ok=True,
+            passed=False,
+            exit_code=1,
+            duration_s=0.1,
+            stdout="",
+            stderr="diff mismatch",
+        )
+
+    monkeypatch.setattr(testing_runner, "run_tests", fake_run_tests)
+
+    tests_dir = tmp_path / "tests_pkg"
+    (tests_dir / "test_data").mkdir(parents=True)
+    (tests_dir / "run_test.sh").write_text("#!/bin/sh\nexit 0\n")
+
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "testing": {"after_each_stage": True},
+            "pipeline": {"order": ["a"]},
+            "stages": {"a": {"uses": str(FAKE)}},
+        }
+    )
+    result = start_run(
+        config,
+        tmp_path,
+        name="gated",
+        supplied_inputs={
+            "rust_project": _source_project(tmp_path),
+            "test_package": tests_dir,
+        },
+        config_files=[],
+        overrides=[],
+    )
+    assert not result.ok
+    assert "post-stage gate" in (result.stages[0].error or "")
+
+
+def test_testing_gate_allows_passing_stage(tmp_path: Path, monkeypatch: Any) -> None:
+    from proctor.testing import runner as testing_runner
+    from proctor.testing.runner import TestResult
+
+    monkeypatch.setattr(
+        testing_runner,
+        "run_tests",
+        lambda project, package, **kwargs: TestResult(
+            build_ok=True,
+            passed=True,
+            exit_code=0,
+            duration_s=0.1,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    tests_dir = tmp_path / "tests_pkg"
+    (tests_dir / "test_data").mkdir(parents=True)
+    (tests_dir / "run_test.sh").write_text("#!/bin/sh\nexit 0\n")
+
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "testing": {"after_each_stage": True},
+            "pipeline": {"order": ["a"]},
+            "stages": {"a": {"uses": str(FAKE)}},
+        }
+    )
+    result = start_run(
+        config,
+        tmp_path,
+        name="gated-ok",
+        supplied_inputs={
+            "rust_project": _source_project(tmp_path),
+            "test_package": tests_dir,
+        },
+        config_files=[],
+        overrides=[],
+    )
+    assert result.ok
+    events = read_events(result.run_dir / "events.jsonl")
+    test_events = [e for e in events if e["event"] == "test_result"]
+    assert test_events and test_events[0]["ok"] is True

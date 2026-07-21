@@ -5,7 +5,10 @@
 #     --input-rust tests/e2e/fixtures/001_helloworld/c2rust
 
 [run]
-provides = ["rust_project"]
+provides = ["rust_project", "test_package"]
+
+[testing]
+after_each_stage = true   # gate the crat stage on the test package (M6)
 
 [pipeline]
 order = ["crat"]

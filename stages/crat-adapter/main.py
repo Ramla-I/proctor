@@ -114,10 +114,20 @@ def crat_env(crat_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["DIR"] = str(crat_dir)
     env["SYSROOT"] = sysroot
-    # prepend, don't overwrite: libz3 and friends may come via the caller
-    sysroot_lib = str(Path(sysroot) / "lib")
-    existing = env.get("LD_LIBRARY_PATH", "")
-    env["LD_LIBRARY_PATH"] = f"{sysroot_lib}:{existing}" if existing else sysroot_lib
+    # Library search path: rustc sysroot (rustc_private libs), plus the
+    # proctor cache's userspace z3 (tests/e2e/README.md recipe) when
+    # present, plus whatever the caller already set.
+    paths = [str(Path(sysroot) / "lib")]
+    cache_z3 = (
+        Path(os.environ.get("PROCTOR_CACHE_DIR", Path.home() / ".cache" / "proctor"))
+        / "z3"
+        / "bin"
+    )
+    if cache_z3.is_dir():
+        paths.append(str(cache_z3))
+    if env.get("LD_LIBRARY_PATH"):
+        paths.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(paths)
     return env
 
 

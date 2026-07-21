@@ -29,7 +29,10 @@ def test_crat_pipeline_end_to_end(tmp_path: Path) -> None:
         config,
         REPO,
         name="crat-smoke",
-        supplied_inputs={"rust_project": FIXTURE},
+        supplied_inputs={
+            "rust_project": FIXTURE,
+            "test_package": FIXTURE.parent / "tests",
+        },
         config_files=[SMOKE_CONFIG],
         overrides=[],
         item="Public-Tests/B01_synthetic/001_helloworld",

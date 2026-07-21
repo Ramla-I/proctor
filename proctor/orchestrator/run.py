@@ -144,6 +144,44 @@ def _produced_state(
     return produced, None
 
 
+def _maybe_gate_on_tests(
+    config: PipelineConfig,
+    events: EventLog,
+    stage_id: str,
+    produced: dict[str, Path],
+    state: dict[str, Path],
+) -> str | None:
+    """Run the test package after a stage when ``[testing]
+    after_each_stage`` is on; a failure gates the pipeline. Returns an
+    error string on failure, None to proceed."""
+    if not config.testing.after_each_stage:
+        return None
+    project = produced.get("rust_project")
+    test_package = state.get("test_package")
+    if project is None or test_package is None:
+        return None
+    from proctor.testing.runner import TestRunnerError, run_tests
+
+    try:
+        result = run_tests(project, test_package, profile=config.testing.profile)
+    except TestRunnerError as exc:
+        events.emit("test_result", stage_id=stage_id, ok=False, error=str(exc))
+        return f"post-stage test setup invalid: {exc}"
+    events.emit(
+        "test_result",
+        stage_id=stage_id,
+        ok=result.ok,
+        build_ok=result.build_ok,
+        exit_code=result.exit_code,
+        duration_s=round(result.duration_s, 2),
+    )
+    if not result.ok:
+        detail = "build failed" if not result.build_ok else "tests failed"
+        tail = (result.stderr or result.stdout)[-500:]
+        return f"post-stage gate: {detail} (exit {result.exit_code}): {tail}"
+    return None
+
+
 def execute_run(
     config: PipelineConfig,
     root: Path,
@@ -279,8 +317,14 @@ def execute_run(
                     if missing:
                         error = missing
                     else:
-                        state.update(produced)
-                        status = "success"
+                        gate_error = _maybe_gate_on_tests(
+                            config, events, stage_id, produced, state
+                        )
+                        if gate_error:
+                            error = gate_error
+                        else:
+                            state.update(produced)
+                            status = "success"
                 else:  # skipped: forward inputs unchanged
                     status = "skipped"
 

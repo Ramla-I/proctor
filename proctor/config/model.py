@@ -63,6 +63,24 @@ class RunSettings:
 
 
 @dataclass(frozen=True)
+class TestingSettings:
+    """``[testing]`` — post-stage test gating (plan §5.5)."""
+
+    after_each_stage: bool = False
+    profile: str = "debug"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TestingSettings:
+        after_each_stage = data.get("after_each_stage", False)
+        if not isinstance(after_each_stage, bool):
+            raise ConfigError("[testing] after_each_stage must be a boolean")
+        profile = data.get("profile", "debug")
+        if profile not in ("debug", "release"):
+            raise ConfigError("[testing] profile must be 'debug' or 'release'")
+        return cls(after_each_stage=after_each_stage, profile=profile)
+
+
+@dataclass(frozen=True)
 class StageEntry:
     """One ``[stages.<id>]`` table."""
 
@@ -111,6 +129,7 @@ class PipelineConfig:
     order: tuple[str, ...]
     stages: dict[str, StageEntry]
     run: RunSettings = field(default_factory=RunSettings)
+    testing: TestingSettings = field(default_factory=TestingSettings)
     llm_defaults: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -150,10 +169,15 @@ class PipelineConfig:
         if not isinstance(run_raw, dict):
             raise ConfigError("[run] must be a table")
 
+        testing_raw = data.get("testing", {})
+        if not isinstance(testing_raw, dict):
+            raise ConfigError("[testing] must be a table")
+
         return cls(
             order=tuple(order_raw),
             stages=stages,
             run=RunSettings.from_dict(run_raw),
+            testing=TestingSettings.from_dict(testing_raw),
             llm_defaults=llm_defaults,
             raw=data,
         )
