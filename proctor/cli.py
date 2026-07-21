@@ -17,7 +17,6 @@ from proctor.orchestrator.run import RunError, RunResult, resume_run, start_run
 from proctor.orchestrator.validate import validate_pipeline
 
 _NOT_YET = {
-    "report": "M3",
     "bench": "M7",
     "warmup": "M8",
 }
@@ -154,6 +153,23 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    from proctor.usage.report import (
+        aggregate,
+        collect,
+        render_csv,
+        render_json,
+        render_table,
+    )
+
+    records = collect([Path(p) for p in args.paths])
+    group_by = [f.strip() for f in args.group_by.split(",") if f.strip()]
+    rows = aggregate(records, group_by)
+    renderers = {"table": render_table, "csv": render_csv, "json": render_json}
+    print(renderers[args.format](rows))
+    return 0
+
+
 def _cmd_not_yet(verb: str, milestone: str) -> int:
     print(f"proctor {verb} arrives with {milestone}; not implemented yet.")
     return 2
@@ -202,6 +218,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory that stage 'uses' paths are relative to (default: cwd)",
     )
     resume.set_defaults(func=_cmd_resume)
+
+    report = subparsers.add_parser(
+        "report", help="aggregate LLM usage over run directories"
+    )
+    report.add_argument("paths", nargs="+", help="run dirs or usage.jsonl files")
+    report.add_argument(
+        "--group-by",
+        default="stage,model",
+        help="comma-separated record fields (default: stage,model)",
+    )
+    report.add_argument("--format", choices=["table", "csv", "json"], default="table")
+    report.set_defaults(func=_cmd_report)
 
     for verb, milestone in _NOT_YET.items():
         stub = subparsers.add_parser(verb, help=f"(arrives with {milestone})")
