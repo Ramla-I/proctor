@@ -37,6 +37,7 @@ def test_missing_config_reports_error(
     assert "does not exist" in captured.err
 
 
-def test_unimplemented_verb_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["bench"]) == 2
-    assert "M7" in capsys.readouterr().out
+def test_unknown_verb_exits_2() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["definitely-not-a-verb"])
+    assert excinfo.value.code == 2

@@ -364,10 +364,18 @@ def start_run(
     config_files: list[Path],
     overrides: list[str],
     item: str | None = None,
+    run_dir: Path | None = None,
 ) -> RunResult:
-    """Create a fresh run directory and execute the pipeline in it."""
-    run_id = make_run_id(name)
-    run_dir = root / config.run.output_dir / run_id
+    """Create a fresh run directory and execute the pipeline in it.
+
+    ``run_dir`` overrides the default ``<output_dir>/<generated id>``
+    location — the batch driver uses this to group case runs.
+    """
+    if run_dir is None:
+        run_id = make_run_id(name)
+        run_dir = root / config.run.output_dir / run_id
+    else:
+        run_id = run_dir.name
     run_dir.mkdir(parents=True)
 
     (run_dir / "run.toml").write_text(tomli_w.dumps(config.raw), encoding="utf-8")

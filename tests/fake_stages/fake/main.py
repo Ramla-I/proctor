@@ -50,6 +50,11 @@ def main() -> int:
 
     src = envelope["inputs"]["rust_project"]
     dst = envelope["outputs"]["rust_project"]
+    if config.get("fail_if_flag") and (Path(src) / "FAIL.txt").exists():
+        output["status"] = "failure"
+        output["error"] = "input project carries FAIL.txt"
+        args.output.write_text(json.dumps(output), encoding="utf-8")
+        return 1
     shutil.copytree(src, dst)
     marker = config.get("marker", "")
     (Path(dst) / "MARKER.txt").write_text(

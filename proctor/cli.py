@@ -17,7 +17,6 @@ from proctor.orchestrator.run import RunError, RunResult, resume_run, start_run
 from proctor.orchestrator.validate import validate_pipeline
 
 _NOT_YET = {
-    "bench": "M7",
     "warmup": "M8",
 }
 
@@ -153,6 +152,31 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    from proctor.orchestrator.bench import run_bench
+    from proctor.orchestrator.run import RunResult
+
+    config = _load_pipeline_config(args)
+    name = args.name or Path(args.config[0]).stem
+    result = run_bench(
+        config, args.root, args.corpus.resolve(), name=name, jobs=args.jobs
+    )
+    ok_count = 0
+    for case, run in result.cases:
+        if isinstance(run, RunResult) and run.ok:
+            ok_count += 1
+            statuses = ",".join(s.status for s in run.stages)
+            print(f"  ok      {case.name}  [{statuses}]")
+        elif isinstance(run, RunResult):
+            failed = next((s for s in run.stages if s.status == "failure"), None)
+            detail = f"{failed.stage_id}: {failed.error}" if failed else "?"
+            print(f"  FAILED  {case.name}  — {detail}")
+        else:
+            print(f"  ERROR   {case.name}  — {run}")
+    print(f"{ok_count}/{len(result.cases)} cases ok — {result.bench_dir}")
+    return 0 if result.ok else 1
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from proctor.usage.report import (
         aggregate,
@@ -218,6 +242,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory that stage 'uses' paths are relative to (default: cwd)",
     )
     resume.set_defaults(func=_cmd_resume)
+
+    bench = subparsers.add_parser(
+        "bench", help="run the pipeline across a corpus of test cases"
+    )
+    _add_config_args(bench)
+    bench.add_argument("--corpus", type=Path, required=True)
+    bench.add_argument("--jobs", type=int, default=None, help="parallel cases")
+    bench.add_argument("--name", help="bench name (default: config file stem)")
+    bench.set_defaults(func=_cmd_bench)
 
     report = subparsers.add_parser(
         "report", help="aggregate LLM usage over run directories"
