@@ -107,6 +107,13 @@ uv run pytest -m e2e   # real-stage tests (see tests/e2e/README.md)
 uv run ruff check . && uv run ruff format . && uv run mypy proctor
 ```
 
+- Design and milestones: `plan_docs/orchestration_framework_implementation_plan.md`
+- Stage authors start at `docs/writing-a-stage.md` + `stages/example-stage/`
+- The envelope contract: `docs/stage-contract.md`
+
+The legacy translation scripts and container live on the `master`
+branch (`docker build -t proctor:june2026 .` there).
+
 ## Using the LLM API
 
 Stages that use the shared LLM client configure everything — provider,
@@ -120,10 +127,3 @@ uv run proctor run -c configs/llm_example.toml \
   --input-rust tests/e2e/fixtures/001_helloworld/c2rust
 uv run proctor report runs/ --group-by stage,model   # tokens + cost
 ```
-
-- Design and milestones: `plan_docs/orchestration_framework_implementation_plan.md`
-- Stage authors start at `docs/writing-a-stage.md` + `stages/example-stage/`
-- The envelope contract: `docs/stage-contract.md`
-
-The legacy translation scripts and container live on the `master`
-branch (`docker build -t proctor:june2026 .` there).
