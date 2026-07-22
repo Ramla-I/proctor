@@ -227,3 +227,18 @@ def test_extra_passthrough_openai() -> None:
     payload = openai.build_payload(_request(), "gpt-5", {"reasoning_effort": "high"})
     assert payload["reasoning_effort"] == "high"
     assert "reasoning_effort" not in openai.build_payload(_request(), "gpt-5")
+
+
+def test_client_error_4xx_not_retried(tmp_path: Path) -> None:
+    provider = FakeProvider([ProviderError("bad request", status=400), _response()])
+    client, log = _client(provider, tmp_path)
+    with pytest.raises(ProviderError):
+        client.complete(_request())
+    assert len(provider.calls) == 1  # deterministic 4xx: exactly one attempt
+    assert read_usage(log)[0]["error"].startswith("ProviderError")
+
+
+def test_429_status_still_retried(tmp_path: Path) -> None:
+    provider = FakeProvider([ProviderError("throttled", status=429), _response()])
+    client, _ = _client(provider, tmp_path)
+    assert client.complete(_request()).text == "hi"

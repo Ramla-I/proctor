@@ -28,6 +28,17 @@ from proctor.usage.tracker import UsageTracker
 _RETRYABLE = (ProviderError, RateLimited)
 
 
+def _is_client_error(exc: LlmError) -> bool:
+    """A 4xx other than 429 is a deterministic request problem —
+    retrying only wastes wall-clock and rate budget."""
+    return (
+        isinstance(exc, ProviderError)
+        and exc.status is not None
+        and 400 <= exc.status < 500
+        and exc.status != 429
+    )
+
+
 class RateLimiter:
     """Sliding-window requests-per-minute limiter."""
 
@@ -117,6 +128,8 @@ class LlmClient:
                 raise
             except _RETRYABLE as exc:
                 self._track_error(current, attempt, started, exc)
+                if _is_client_error(exc):  # 4xx (except 429): deterministic, no retry
+                    raise
                 if attempt > self._max_retries:
                     raise
                 self._sleep(self._backoff(attempt, exc))

@@ -37,6 +37,7 @@ from proctor.contracts import (
 from proctor.llm.client import LlmClient
 from proctor.llm.types import LlmError, Message, Request, RequestMetadata
 from proctor.prompts.library import PromptLibrary
+from proctor.usage.pricing import PricingTable
 from proctor.usage.tracker import UsageTracker
 
 STAGE_ID = "example_llm"
@@ -84,12 +85,14 @@ def run_stage(stage_input: StageInput) -> StageOutput:
             run_id=stage_input.run_id,
             stage=stage_input.stage_id,
             item=stage_input.item,
+            pricing=PricingTable.from_config(settings),  # [llm.pricing] -> cost_usd
         )
     client = LlmClient(settings, tracker=tracker)
+    # temperature deliberately unset: newer models reject it, and when
+    # wanted it belongs in config ([llm] or [stages.<id>.llm]), not code
     response = client.complete(
         Request(
             messages=(Message(role="user", content=rendered.text),),
-            temperature=0.0,
             metadata=RequestMetadata(
                 run_id=stage_input.run_id,
                 stage=stage_input.stage_id,
