@@ -71,6 +71,36 @@ the stages via `proctor warmup`, so containerized runs need zero host
 setup. Mount a volume over `/home/proctor/proctor/runs` to keep run
 directories. `PROCTOR_IMAGE` is stamped into each run's `run.json`.
 
+## Using the LLM API (example stage)
+
+`stages/example-llm-stage/` is a complete stage built on the shared
+components: `LlmClient` configured from the envelope, per-call usage
+tracking, and a versioned prompt template. It copies the project
+through and adds an LLM-written `TRANSLATION_NOTES.md`:
+
+```bash
+export ANTHROPIC_API_KEY=...    # keys always come from env, never config
+uv run proctor run -c configs/llm_example.toml \
+  --input-rust tests/e2e/fixtures/001_helloworld/c2rust
+uv run proctor report runs/ --group-by stage,model   # tokens + cost
+```
+
+Everything about the model is configuration (`configs/llm_example.toml`):
+
+- **Provider/model:** `[llm] provider`, `model` — or per stage under
+  `[stages.<id>.llm]`; switch on the command line with
+  `--set llm.model="claude-sonnet-5"`.
+- **API key:** read from `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` (or the
+  env var named by `api_key_env`).
+- **Reasoning effort / provider extras:** `[llm.extra]` is merged into
+  the request payload — e.g. Anthropic extended thinking
+  (`[llm.extra.thinking] type = "enabled"` + `budget_tokens`) or
+  OpenAI `reasoning_effort = "high"`.
+- **Local/compat servers** (vLLM, Ollama, Gemini-compat):
+  `provider = "openai"` plus `base_url`.
+- **Cost:** `[llm.pricing."provider/model"]` in $/Mtok feeds
+  `cost_usd` in usage records and `proctor report`.
+
 ## Adding a stage
 
 A stage is a standalone program in its own repo — any language, any

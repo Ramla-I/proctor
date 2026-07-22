@@ -211,3 +211,19 @@ def test_record_then_replay(tmp_path: Path) -> None:
 
     with pytest.raises(ProviderError, match="no cassette"):
         replay.complete(_request("never recorded"))
+
+
+def test_extra_passthrough_anthropic() -> None:
+    payload = anthropic.build_payload(
+        _request(),
+        "claude-opus-4-8",
+        {"thinking": {"type": "enabled", "budget_tokens": 8000}},
+    )
+    assert payload["thinking"] == {"type": "enabled", "budget_tokens": 8000}
+    assert anthropic.build_payload(_request(), "m").get("thinking") is None
+
+
+def test_extra_passthrough_openai() -> None:
+    payload = openai.build_payload(_request(), "gpt-5", {"reasoning_effort": "high"})
+    assert payload["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in openai.build_payload(_request(), "gpt-5")

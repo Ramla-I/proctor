@@ -1,0 +1,12 @@
+[project]
+name = "example-llm-stage"
+version = "0.1.0"
+description = "proctor example stage exercising the shared LLM client, usage tracker, and prompt library"
+requires-python = ">=3.12"
+dependencies = ["proctor"]
+
+# The framework itself, from this checkout. A stage in its own repo
+# would instead use a git source:
+#   proctor = { git = "https://github.com/Yale-PROCTOR/proctor" }
+[tool.uv.sources]
+proctor = { path = "../..", editable = true }

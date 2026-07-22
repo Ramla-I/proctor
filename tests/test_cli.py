@@ -41,3 +41,18 @@ def test_unknown_verb_exits_2() -> None:
     with pytest.raises(SystemExit) as excinfo:
         main(["definitely-not-a-verb"])
     assert excinfo.value.code == 2
+
+
+def test_validate_llm_example_config(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(
+        [
+            "validate",
+            "-c",
+            str(REPO / "configs" / "llm_example.toml"),
+            "--root",
+            str(REPO),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 0, captured.out
+    assert "example_llm" in captured.out

@@ -7,6 +7,9 @@ dist/
 .ruff_cache/
 .pytest_cache/
 
+# rust build artifacts (any crate, any depth)
+target/
+
 # framework outputs
 runs/
 

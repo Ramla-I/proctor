@@ -39,7 +39,9 @@ _FINISH_REASONS: dict[str, FinishReason] = {
 }
 
 
-def build_payload(request: Request, default_model: str) -> dict[str, Any]:
+def build_payload(
+    request: Request, default_model: str, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     messages: list[dict[str, str]] = []
     if request.system is not None:
         messages.append({"role": "system", "content": request.system})
@@ -52,6 +54,10 @@ def build_payload(request: Request, default_model: str) -> dict[str, Any]:
         payload["max_tokens"] = request.max_tokens
     if request.temperature is not None:
         payload["temperature"] = request.temperature
+    # provider-specific passthrough from [llm] extra, e.g.
+    # extra = { reasoning_effort = "high" }
+    if extra:
+        payload.update(extra)
     return payload
 
 
@@ -133,6 +139,8 @@ class OpenAiProvider:
         self._api_key = os.environ.get(key_env, "")
         self._model = str(settings.get("model", ""))
         self._timeout = float(settings.get("request_timeout_s", 600))
+        extra = settings.get("extra")
+        self._extra: dict[str, Any] | None = extra if isinstance(extra, dict) else None
 
     def complete(self, request: Request) -> Response:
         headers = {"Content-Type": "application/json"}
@@ -143,7 +151,7 @@ class OpenAiProvider:
             http = httpx.post(
                 f"{self._base_url}/chat/completions",
                 headers=headers,
-                json=build_payload(request, self._model),
+                json=build_payload(request, self._model, self._extra),
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:

@@ -40,7 +40,9 @@ _FINISH_REASONS: dict[str, FinishReason] = {
 }
 
 
-def build_payload(request: Request, default_model: str) -> dict[str, Any]:
+def build_payload(
+    request: Request, default_model: str, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": request.model or default_model,
         "max_tokens": request.max_tokens or DEFAULT_MAX_TOKENS,
@@ -50,6 +52,10 @@ def build_payload(request: Request, default_model: str) -> dict[str, Any]:
         payload["system"] = request.system
     if request.temperature is not None:
         payload["temperature"] = request.temperature
+    # provider-specific passthrough from [llm] extra, e.g.
+    # extra = { thinking = { type = "enabled", budget_tokens = 8000 } }
+    if extra:
+        payload.update(extra)
     return payload
 
 
@@ -126,6 +132,8 @@ class AnthropicProvider:
         self._api_key = os.environ.get(key_env)
         self._model = str(settings.get("model", ""))
         self._timeout = float(settings.get("request_timeout_s", 600))
+        extra = settings.get("extra")
+        self._extra: dict[str, Any] | None = extra if isinstance(extra, dict) else None
 
     def complete(self, request: Request) -> Response:
         if not self._api_key:
@@ -140,7 +148,7 @@ class AnthropicProvider:
                     "x-api-key": self._api_key,
                     "anthropic-version": API_VERSION,
                 },
-                json=build_payload(request, self._model),
+                json=build_payload(request, self._model, self._extra),
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:
