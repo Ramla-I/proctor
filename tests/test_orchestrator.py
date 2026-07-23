@@ -368,3 +368,29 @@ def test_gate_tests_per_stage_override(tmp_path: Path, monkeypatch: Any) -> None
     )
     assert result2.ok
     assert calls == ["00-c"]
+
+
+def test_produced_test_package_threads_to_downstream(tmp_path: Path) -> None:
+    testgen = Path(__file__).parent / "fake_stages" / "testgen"
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project"]},
+            "pipeline": {"order": ["gen", "b"]},
+            "stages": {
+                "gen": {"uses": str(testgen)},
+                "b": {"uses": str(FAKE)},
+            },
+        }
+    )
+    result = start_run(
+        config,
+        tmp_path,
+        name="testgen-thread",
+        supplied_inputs={"rust_project": _source_project(tmp_path)},
+        config_files=[],
+        overrides=[],
+    )
+    assert result.ok, [s.error for s in result.stages]
+    generated = result.run_dir / "stages" / "00-gen" / "out" / "tests"
+    assert (generated / "run_test.sh").is_file()
+    assert result.final["test_package"] == generated

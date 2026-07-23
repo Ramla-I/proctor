@@ -107,3 +107,19 @@ def test_id_mismatch_warns(tmp_path: Path) -> None:
     result, _ = validate_pipeline(config, tmp_path)
     assert result.ok
     assert result.warnings and "declares id" in result.warnings[0]
+
+
+def test_produced_test_package_satisfies_requirement(tmp_path: Path) -> None:
+    _write_stage(
+        tmp_path,
+        "gen",
+        requires={"c_project": "required"},
+        produces={"test_package": True},
+    )
+    _write_stage(tmp_path, "checker", requires={"test_package": "required"})
+    result, _ = validate_pipeline(
+        _config(["gen", "checker"]),
+        tmp_path,
+        provided=frozenset({"c_project"}),
+    )
+    assert result.ok, result.errors

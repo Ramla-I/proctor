@@ -1,0 +1,14 @@
+id = "test_generation"
+version = "0.1.0"
+description = "Generate a spec-§2.3 test package from the C project's TRACTOR test vectors (component spec §5.1)."
+
+exec = ["python3", "main.py"]
+
+[requires]
+c_project = "required"
+
+[produces]
+test_package = true
+
+[config]
+vectors_path = { type = "string", default = "test_vectors", doc = "vectors dir relative to the C project (searched at its root too)" }

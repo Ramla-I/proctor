@@ -17,7 +17,7 @@ from typing import Any, Literal
 STAGE_MANIFEST_NAME = "stage.toml"
 
 ARTIFACT_KINDS = ("c_project", "rust_project", "test_package", "rule_set")
-PRODUCIBLE_KINDS = ("rust_project", "rule_set")
+PRODUCIBLE_KINDS = ("rust_project", "rule_set", "test_package")
 
 Requirement = Literal["required", "optional", "unused"]
 _REQUIREMENTS = ("required", "optional", "unused")

@@ -1,0 +1,9 @@
+id = "testgen"
+version = "0.1.0"
+exec = ["python3", "main.py"]
+
+[requires]
+c_project = "optional"
+
+[produces]
+test_package = true

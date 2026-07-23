@@ -104,6 +104,9 @@ def _stage_dests(stage_run_dir: Path, validated: ValidatedStage) -> OutputDestin
         rule_set=(stage_run_dir / "out" / "rule_set")
         if produces.get("rule_set")
         else None,
+        test_package=(stage_run_dir / "out" / "tests")
+        if produces.get("test_package")
+        else None,
         artifacts_dir=stage_run_dir / "out" / "artifacts",
     )
 
@@ -140,6 +143,8 @@ def _produced_state(
             return {}, f"declared output {kind} missing at {path}"
         if kind == "rule_set" and not path.is_file():
             return {}, f"declared output {kind} missing at {path}"
+        if kind == "test_package" and not (path / "run_test.sh").is_file():
+            return {}, f"declared output {kind} at {path} has no run_test.sh"
         produced[kind] = path
     return produced, None
 

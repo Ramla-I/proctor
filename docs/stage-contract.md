@@ -67,7 +67,7 @@ rust_project = "required"
 test_package = "required"
 rule_set     = "unused"
 
-[produces]                            # only rust_project and rule_set
+[produces]                            # rust_project, rule_set, test_package
 rust_project = true
 rule_set     = false
 

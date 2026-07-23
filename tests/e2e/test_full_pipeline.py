@@ -25,17 +25,22 @@ def test_full_pipeline_with_scaffold_stage(tmp_path: Path) -> None:
         config,
         REPO,
         name="full-pipeline",
-        supplied_inputs={
-            "c_project": FIXTURE / "c",
-            "test_package": FIXTURE / "tests",
-        },
+        supplied_inputs={"c_project": FIXTURE / "c"},
         config_files=[CONFIG],
         overrides=[],
         item="Public-Tests/B01_synthetic/001_helloworld",
     )
     assert result.ok, [s.error for s in result.stages]
-    # scaffold stage skips (no candidates) and forwards crat's output
-    assert [s.status for s in result.stages] == ["success", "success", "skipped"]
+    # test_generation produces the package; scaffold stage skips (no
+    # candidates) and forwards crat's output
+    assert [s.status for s in result.stages] == [
+        "success",
+        "success",
+        "success",
+        "skipped",
+    ]
+    # the generated package gated crat and is threaded through state
+    assert (result.final["test_package"] / "run_test.sh").is_file()
     final = result.final["rust_project"]
-    assert "01-crat" in str(final)  # skip forwarded, not copied
+    assert "02-crat" in str(final)  # skip forwarded, not copied
     assert ProjectManifest.load(final).target_name == "driver"

@@ -135,6 +135,7 @@ class OutputDestinations:
 
     rust_project: Path | None = None
     rule_set: Path | None = None
+    test_package: Path | None = None
     artifacts_dir: Path | None = None
 
     @classmethod
@@ -142,6 +143,7 @@ class OutputDestinations:
         return cls(
             rust_project=_opt_path(data, "rust_project"),
             rule_set=_opt_path(data, "rule_set"),
+            test_package=_opt_path(data, "test_package"),
             artifacts_dir=_opt_path(data, "artifacts_dir"),
         )
 
@@ -149,6 +151,7 @@ class OutputDestinations:
         return {
             "rust_project": _path_str(self.rust_project),
             "rule_set": _path_str(self.rule_set),
+            "test_package": _path_str(self.test_package),
             "artifacts_dir": _path_str(self.artifacts_dir),
         }
 

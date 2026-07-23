@@ -1,0 +1,9 @@
+[project]
+name = "test-gen-stage"
+version = "0.1.0"
+description = "proctor stage: TRACTOR vectors -> test package (spec §5.1 Test Generation)"
+requires-python = ">=3.12"
+dependencies = ["proctor"]
+
+[tool.uv.sources]
+proctor = { path = "../..", editable = true }

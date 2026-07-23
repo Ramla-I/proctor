@@ -3,70 +3,200 @@
   "$id": "https://github.com/Yale-PROCTOR/proctor/schemas/stage_output.v1.json",
   "title": "proctor stage_output envelope (schema_version 1)",
   "type": "object",
-  "required": ["schema_version", "status", "stage_id"],
+  "required": [
+    "schema_version",
+    "status",
+    "stage_id"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "status": { "enum": ["success", "failure", "skipped"] },
-    "stage_id": { "type": "string", "minLength": 1 },
-    "stage_version": { "type": ["string", "null"] },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failure",
+        "skipped"
+      ]
+    },
+    "stage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "outputs": {
       "type": "object",
       "properties": {
-        "rust_project": { "type": ["string", "null"] },
-        "rule_set": { "type": ["string", "null"] },
-        "artifacts_dir": { "type": ["string", "null"] }
+        "rust_project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_set": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_package": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifacts_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-    "config_used": { "type": "object" },
+    "config_used": {
+      "type": "object"
+    },
     "models": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["provider", "model"],
+        "required": [
+          "provider",
+          "model"
+        ],
         "properties": {
-          "provider": { "type": "string", "minLength": 1 },
-          "model": { "type": "string", "minLength": 1 }
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "usage": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "properties": {
-        "calls": { "type": "integer", "minimum": 0 },
-        "input_tokens": { "type": "integer", "minimum": 0 },
-        "cached_input_tokens": { "type": "integer", "minimum": 0 },
-        "output_tokens": { "type": "integer", "minimum": 0 },
-        "reasoning_tokens": { "type": ["integer", "null"], "minimum": 0 },
-        "cost_usd": { "type": ["number", "null"], "minimum": 0 }
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
     "prompts": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "version"],
+        "required": [
+          "id",
+          "version"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "version": { "type": "integer", "minimum": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       }
     },
-    "metrics": { "type": "object" },
-    "logs": { "type": "array", "items": { "type": "string" } },
-    "metadata": { "type": "object" },
-    "error": { "type": ["string", "null"] }
+    "metrics": {
+      "type": "object"
+    },
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
   },
   "allOf": [
     {
-      "if": { "properties": { "status": { "const": "failure" } } },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failure"
+          }
+        }
+      },
       "then": {
-        "required": ["error"],
-        "properties": { "error": { "type": "string", "minLength": 1 } }
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     {
-      "if": { "properties": { "status": { "enum": ["success", "skipped"] } } },
-      "then": { "properties": { "error": { "type": "null" } } }
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "success",
+              "skipped"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
     }
   ]
 }
