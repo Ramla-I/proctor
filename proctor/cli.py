@@ -192,6 +192,24 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_make_tests(args: argparse.Namespace) -> int:
+    from proctor.testing.vectors import VectorError, generate_test_package
+
+    try:
+        package = generate_test_package(args.source.resolve(), args.out.resolve())
+    except VectorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    line = f"ok: {package.vectors} vector(s) packaged into {package.package_dir}"
+    if package.unsupported:
+        line += (
+            f" ({len(package.unsupported)} will SKIP at run time: "
+            f"{', '.join(package.unsupported)})"
+        )
+    print(line)
+    return 0
+
+
 def _cmd_warmup(args: argparse.Namespace) -> int:
     """Resolve stage venvs, run stage warmup commands, build the index
     crate — so runs (and container image builds) start warm."""
@@ -314,6 +332,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument("--format", choices=["table", "csv", "json"], default="table")
     report.set_defaults(func=_cmd_report)
+
+    make_tests = subparsers.add_parser(
+        "make-tests",
+        help="generate a test package from a case's TRACTOR test vectors",
+    )
+    make_tests.add_argument(
+        "source", type=Path, help="case dir (with test_vectors/) or vectors dir"
+    )
+    make_tests.add_argument("out", type=Path, help="output test-package dir")
+    make_tests.set_defaults(func=_cmd_make_tests)
 
     warmup = subparsers.add_parser(
         "warmup", help="pre-build stage venvs, adapters, and the index crate"
