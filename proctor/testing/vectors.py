@@ -13,9 +13,10 @@ comparator is Python rather than pure POSIX sh because exact-bytes and
 regex matching are not honestly expressible in shell; ``python3`` is
 already required by every stage adapter.
 
-Library-state vectors (``lib_state_in``/``lib_state_out``) need
-cando's dlopen harness and are refused at generation time (plan §3 —
-loudly, never a silently wrong package).
+Library cases (``lib_state_in``/``lib_state_out`` vectors) bundle the
+case's cando harness crate into ``test_data/runner`` with its cando2
+path dependency rewritten to the corpus checkout (plan T3); at run
+time the harness is built once (cached) and drives the ``.so``.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class GeneratedPackage:
     package_dir: Path
     vectors: int
     unsupported: tuple[str, ...]  # names skipped at run time (setup/file-changes)
+    library: bool = False  # bundles the case's cando harness crate
 
 
 def find_vectors_dir(source: Path) -> Path:
@@ -88,8 +90,45 @@ def _scan_entry(entry: Path) -> tuple[bool, str | None]:
     return is_library, unsupported
 
 
+def _bundle_harness_crate(case_runner: Path, dest: Path) -> None:
+    """Copy the case's cando harness crate into the package, rewriting
+    its relative ``cando2`` path dependency to an absolute one (the
+    corpus checkout). Library packages are therefore machine-local —
+    they are generated per run, not committed."""
+    import tomllib
+
+    shutil.copytree(
+        case_runner,
+        dest,
+        ignore=shutil.ignore_patterns("target", "fuzz", "Cargo.lock"),
+    )
+    cargo_file = dest / "Cargo.toml"
+    cargo = tomllib.loads(cargo_file.read_text(encoding="utf-8"))
+    dep = cargo.get("dependencies", {}).get("cando2")
+    if not isinstance(dep, dict) or "path" not in dep:
+        raise VectorError(f"{case_runner}/Cargo.toml has no cando2 path dependency")
+    relative = str(dep["path"])
+    absolute = (case_runner / relative).resolve()
+    if not (absolute / "Cargo.toml").is_file():
+        raise VectorError(
+            f"cando2 crate not found at {absolute} "
+            f"(is the Test-Corpus submodule initialized?)"
+        )
+    text = cargo_file.read_text(encoding="utf-8")
+    if relative not in text:
+        raise VectorError(f"cannot rewrite cando2 path in {cargo_file}")
+    cargo_file.write_text(text.replace(relative, str(absolute), 1), encoding="utf-8")
+
+
 def generate_test_package(source: Path, out_dir: Path) -> GeneratedPackage:
-    """Generate a §2.3 test package from a case's TRACTOR vectors."""
+    """Generate a §2.3 test package from a case's TRACTOR vectors.
+
+    Executable cases produce a self-contained package. Library cases
+    (``lib_state_*`` vectors) additionally bundle the case's cando
+    harness crate (``<case>/runner``); at run time the harness is built
+    once (cached) and drives the ``.so`` per vector — so library
+    packages need ``cargo`` on the test machine.
+    """
     vectors_dir = find_vectors_dir(source)
     entries = _vector_entries(vectors_dir)
 
@@ -101,11 +140,12 @@ def generate_test_package(source: Path, out_dir: Path) -> GeneratedPackage:
             library_vectors.append(entry.name)
         if reason:
             unsupported.append(entry.name)
-    if library_vectors:
+
+    case_runner = vectors_dir.parent / "runner"
+    if library_vectors and not (case_runner / "Cargo.toml").is_file():
         raise VectorError(
-            f"library-state vectors are not supported yet "
-            f"(need the cando harness — see "
-            f"plan_docs/test_vector_integration_plan.md §3): {library_vectors}"
+            f"library-state vectors need the case's cando harness crate, "
+            f"but {case_runner} has none: {library_vectors}"
         )
 
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -118,6 +158,9 @@ def generate_test_package(source: Path, out_dir: Path) -> GeneratedPackage:
         else:
             shutil.copy2(entry, dest_vectors / entry.name)
 
+    if library_vectors:
+        _bundle_harness_crate(case_runner, out_dir / "test_data" / "runner")
+
     shutil.copy2(_RUNNER_SOURCE, out_dir / "run_vectors.py")
     script = out_dir / "run_test.sh"
     script.write_text(RUN_TEST_SH, encoding="utf-8")
@@ -127,4 +170,5 @@ def generate_test_package(source: Path, out_dir: Path) -> GeneratedPackage:
         package_dir=out_dir,
         vectors=len(entries),
         unsupported=tuple(unsupported),
+        library=bool(library_vectors),
     )

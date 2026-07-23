@@ -1,5 +1,17 @@
 # Test-Vector Integration Plan
 
+> **Status (2026-07-23):** implemented on the `test-vectors` branch.
+> T1 (converter + `make-tests` + conformance suite), T2 (bench
+> synthesis + per-stage `gate_tests`), T4 (`test_generation` stage +
+> `test_package` producible), and T3 (library vectors through the
+> case's real cando harness crate, bundled + built at run time) are
+> all done. §3's open question resolved: each `_lib` case ships a
+> `runner/` harness crate using cando2's `harness!` macro; packages
+> bundle it with the cando2 path dependency rewritten to the corpus
+> checkout. One noted deviation: the package comparator is generated
+> Python behind the `run_test.sh` shim rather than pure POSIX sh —
+> exact-bytes/regex fidelity is not expressible in shell.
+
 How TRACTOR test vectors become first-class verification inside the
 pipeline. Companion to `orchestration_framework_implementation_plan.md`
 (whose Future Work section anticipated this); interfaces follow

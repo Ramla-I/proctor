@@ -146,15 +146,45 @@ def test_setup_dir_vector_skips_loudly(tmp_path: Path) -> None:
     assert "SKIP  dirvec" in output
 
 
-def test_library_state_vectors_refused(tmp_path: Path) -> None:
-    vectors_dir = tmp_path / "test_vectors"
-    vectors_dir.mkdir()
+def _lib_case(tmp_path: Path, *, with_runner: bool = True) -> Path:
+    case = tmp_path / "case"
+    vectors_dir = case / "test_vectors"
+    vectors_dir.mkdir(parents=True)
     (vectors_dir / "lib.json").write_text(
         json.dumps({"lib_state_in": {"x": 1}, "lib_state_out": {"x": 2}}),
         encoding="utf-8",
     )
-    with pytest.raises(VectorError, match="library-state"):
-        generate_test_package(vectors_dir, tmp_path / "package")
+    if with_runner:
+        cando2 = tmp_path / "tools" / "cando2"
+        cando2.mkdir(parents=True)
+        (cando2 / "Cargo.toml").write_text(
+            '[package]\nname = "cando2"\n', encoding="utf-8"
+        )
+        runner = case / "runner"
+        (runner / "src").mkdir(parents=True)
+        (runner / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (runner / "Cargo.toml").write_text(
+            '[package]\nname = "case_runner"\nversion = "0.1.0"\n'
+            '[dependencies]\ncando2 = { path = "../../tools/cando2" }\n',
+            encoding="utf-8",
+        )
+    return case
+
+
+def test_library_vectors_refused_without_harness(tmp_path: Path) -> None:
+    case = _lib_case(tmp_path, with_runner=False)
+    with pytest.raises(VectorError, match="cando harness crate"):
+        generate_test_package(case, tmp_path / "package")
+
+
+def test_library_package_bundles_rewritten_harness(tmp_path: Path) -> None:
+    case = _lib_case(tmp_path)
+    package = generate_test_package(case, tmp_path / "package")
+    assert package.library
+    bundled = tmp_path / "package" / "test_data" / "runner" / "Cargo.toml"
+    text = bundled.read_text(encoding="utf-8")
+    assert "../../tools/cando2" not in text  # relative dep rewritten...
+    assert str((tmp_path / "tools" / "cando2").resolve()) in text  # ...to absolute
 
 
 def test_case_dir_and_nonempty_output_refused(tmp_path: Path) -> None:

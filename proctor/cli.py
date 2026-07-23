@@ -201,6 +201,8 @@ def _cmd_make_tests(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     line = f"ok: {package.vectors} vector(s) packaged into {package.package_dir}"
+    if package.library:
+        line += " (library: bundles the case's cando harness; needs cargo)"
     if package.unsupported:
         line += (
             f" ({len(package.unsupported)} will SKIP at run time: "
