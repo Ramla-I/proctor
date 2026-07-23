@@ -1,0 +1,32 @@
+# Bench the translation component across a TRACTOR corpus directory.
+# Cases have no §2.3 test packages — they are synthesized per case from
+# each case's test_vectors/ (plan T2).
+#
+#   uv run proctor bench -c configs/corpus_bench.toml \
+#     --corpus Test-Corpus/Public-Tests/B01_synthetic --jobs 16
+
+[run]
+provides = ["c_project", "test_package"]
+
+[testing]
+after_each_stage = true
+
+[bench]
+jobs = 16
+vectors_path = "test_vectors"
+
+[bench.layout]
+c_project = "."        # a corpus case root IS the C project (test_case/ inside)
+test_package = "tests" # never present in the corpus -> synthesized from vectors
+
+[pipeline]
+order = ["c2rust", "crat"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 1800
+gate_tests = false
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 3600

@@ -88,6 +88,7 @@ class StageEntry:
     uses: Path
     enabled: bool = True
     timeout_s: int | None = None
+    gate_tests: bool | None = None  # overrides [testing] after_each_stage
     config: dict[str, Any] = field(default_factory=dict)
     llm: dict[str, Any] = field(default_factory=dict)
 
@@ -106,6 +107,9 @@ class StageEntry:
             not isinstance(timeout_s, int) or isinstance(timeout_s, bool)
         ):
             raise ConfigError(f"[stages.{stage_id}] timeout_s must be an integer")
+        gate_tests = data.get("gate_tests")
+        if gate_tests is not None and not isinstance(gate_tests, bool):
+            raise ConfigError(f"[stages.{stage_id}] gate_tests must be a boolean")
         config = data.get("config", {})
         if not isinstance(config, dict):
             raise ConfigError(f"[stages.{stage_id}.config] must be a table")
@@ -117,6 +121,7 @@ class StageEntry:
             uses=Path(uses),
             enabled=enabled,
             timeout_s=timeout_s,
+            gate_tests=gate_tests,
             config=config,
             llm=llm,
         )

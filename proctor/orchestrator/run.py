@@ -17,7 +17,7 @@ from pathlib import Path
 
 import tomli_w
 
-from proctor.config.model import PipelineConfig
+from proctor.config.model import PipelineConfig, StageEntry
 from proctor.orchestrator.checkpoint import (
     chain_key,
     config_hash,
@@ -147,14 +147,22 @@ def _produced_state(
 def _maybe_gate_on_tests(
     config: PipelineConfig,
     events: EventLog,
-    stage_id: str,
+    entry: StageEntry,
     produced: dict[str, Path],
     state: dict[str, Path],
 ) -> str | None:
-    """Run the test package after a stage when ``[testing]
-    after_each_stage`` is on; a failure gates the pipeline. Returns an
-    error string on failure, None to proceed."""
-    if not config.testing.after_each_stage:
+    """Run the test package after a stage when gating is on; a failure
+    gates the pipeline. ``[stages.<id>] gate_tests`` overrides the
+    global ``[testing] after_each_stage`` per stage — e.g. off for
+    c2rust (whose output is a lib crate even for executable cases), on
+    from crat onward. Returns an error string on failure."""
+    stage_id = entry.id
+    gate = (
+        entry.gate_tests
+        if entry.gate_tests is not None
+        else config.testing.after_each_stage
+    )
+    if not gate:
         return None
     project = produced.get("rust_project")
     test_package = state.get("test_package")
@@ -318,7 +326,7 @@ def execute_run(
                         error = missing
                     else:
                         gate_error = _maybe_gate_on_tests(
-                            config, events, stage_id, produced, state
+                            config, events, entry, produced, state
                         )
                         if gate_error:
                             error = gate_error

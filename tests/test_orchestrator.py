@@ -295,3 +295,76 @@ def test_testing_gate_allows_passing_stage(tmp_path: Path, monkeypatch: Any) -> 
     events = read_events(result.run_dir / "events.jsonl")
     test_events = [e for e in events if e["event"] == "test_result"]
     assert test_events and test_events[0]["ok"] is True
+
+
+def test_gate_tests_per_stage_override(tmp_path: Path, monkeypatch: Any) -> None:
+    from proctor.testing import runner as testing_runner
+    from proctor.testing.runner import TestResult
+
+    calls: list[str] = []
+
+    def fake_run_tests(project: Path, package: Path, **kwargs: Any) -> TestResult:
+        calls.append(project.parent.parent.name)  # stage dir name (NN-id)
+        return TestResult(
+            build_ok=True,
+            passed=True,
+            exit_code=0,
+            duration_s=0.1,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(testing_runner, "run_tests", fake_run_tests)
+    tests_dir = tmp_path / "tests_pkg"
+    (tests_dir / "test_data").mkdir(parents=True)
+    (tests_dir / "run_test.sh").write_text("#!/bin/sh\nexit 0\n")
+
+    # global gate ON, stage a opts OUT, stage b defaults to global
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "testing": {"after_each_stage": True},
+            "pipeline": {"order": ["a", "b"]},
+            "stages": {
+                "a": {"uses": str(FAKE), "gate_tests": False},
+                "b": {"uses": str(FAKE)},
+            },
+        }
+    )
+    result = start_run(
+        config,
+        tmp_path,
+        name="gate-override",
+        supplied_inputs={
+            "rust_project": _source_project(tmp_path),
+            "test_package": tests_dir,
+        },
+        config_files=[],
+        overrides=[],
+    )
+    assert result.ok
+    assert calls == ["01-b"]  # a's gate skipped, b's ran
+
+    # global gate OFF, stage opts IN
+    calls.clear()
+    (tmp_path / "second").mkdir()
+    config2 = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "pipeline": {"order": ["c"]},
+            "stages": {"c": {"uses": str(FAKE), "gate_tests": True}},
+        }
+    )
+    result2 = start_run(
+        config2,
+        tmp_path / "second",
+        name="gate-optin",
+        supplied_inputs={
+            "rust_project": _source_project(tmp_path / "second"),
+            "test_package": tests_dir,
+        },
+        config_files=[],
+        overrides=[],
+    )
+    assert result2.ok
+    assert calls == ["00-c"]

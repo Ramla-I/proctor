@@ -8,13 +8,11 @@
 [run]
 provides = ["c_project", "test_package"]
 
-# The gate stays OFF here: mid-component, the c2rust stage's output is a
+# Vector gating is ON — but per-stage: the c2rust stage's output is a
 # library crate even for executable cases (the bin arrives with crat's
-# bin pass), so executing the artifact against run_test.sh would fail
-# spuriously. The e2e test verifies the FINAL project explicitly.
-# (Future refinement: per-stage gate flag.)
+# bin pass), so its gate is off; crat's output is gated on the vectors.
 [testing]
-after_each_stage = false
+after_each_stage = true
 
 [pipeline]
 order = ["c2rust", "crat"]
@@ -22,6 +20,7 @@ order = ["c2rust", "crat"]
 [stages.c2rust]
 uses = "stages/c2rust-adapter"
 timeout_s = 1800
+gate_tests = false   # lib-shaped mid-component output; see note above
 
 [stages.crat]
 uses = "stages/crat-adapter"

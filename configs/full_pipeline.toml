@@ -8,7 +8,7 @@
 provides = ["c_project", "test_package"]
 
 [testing]
-after_each_stage = false   # see tests/e2e/translation_smoke.toml note
+after_each_stage = true    # per-stage override below for c2rust
 
 [pipeline]
 order = ["c2rust", "crat", "abstraction_recovery"]
@@ -16,6 +16,7 @@ order = ["c2rust", "crat", "abstraction_recovery"]
 [stages.c2rust]
 uses = "stages/c2rust-adapter"
 timeout_s = 1800
+gate_tests = false   # lib-shaped mid-component output (see translation_smoke note)
 
 [stages.crat]
 uses = "stages/crat-adapter"

@@ -121,3 +121,56 @@ def test_bench_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert code == 0
     assert "1/1 cases ok" in out
+
+
+def _vector_corpus(tmp_path: Path, cases: dict[str, bool]) -> Path:
+    """Cases with rust projects and TRACTOR vectors but NO test package.
+    value True -> vectors include a library-state vector (unsupported)."""
+    corpus = tmp_path / "corpus"
+    for name, lib_state in cases.items():
+        rust = corpus / name / "rust"
+        rust.mkdir(parents=True)
+        (rust / "Cargo.toml").write_text("[package]\nname='x'\n", encoding="utf-8")
+        vectors = corpus / name / "test_vectors"
+        vectors.mkdir()
+        vector: dict[str, object] = {"rc": 0}
+        if lib_state:
+            vector["lib_state_in"] = {}
+        (vectors / "t1.json").write_text(json.dumps(vector), encoding="utf-8")
+    return corpus
+
+
+def test_bench_synthesizes_test_packages(tmp_path: Path) -> None:
+    corpus = _vector_corpus(tmp_path, {"case1": False})
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "bench": {"layout": {"rust_project": "rust"}, "jobs": 1},
+            "pipeline": {"order": ["a"]},
+            "stages": {"a": {"uses": str(FAKE)}},
+        }
+    )
+    result = run_bench(config, tmp_path, corpus, name="synth")
+    assert result.ok
+    # the synthesized package was recorded into the case's run dir
+    run_dir = result.bench_dir / "case1"
+    assert (run_dir / "inputs" / "tests" / "run_test.sh").is_file()
+    assert (run_dir / "inputs" / "tests" / "run_vectors.py").is_file()
+
+
+def test_bench_synthesis_failure_isolated(tmp_path: Path) -> None:
+    corpus = _vector_corpus(tmp_path, {"good": False, "libcase": True})
+    config = PipelineConfig.from_dict(
+        {
+            "run": {"provides": ["rust_project", "test_package"]},
+            "bench": {"layout": {"rust_project": "rust"}, "jobs": 2},
+            "pipeline": {"order": ["a"]},
+            "stages": {"a": {"uses": str(FAKE)}},
+        }
+    )
+    result = run_bench(config, tmp_path, corpus, name="mixed")
+    assert not result.ok
+    outcomes = {case.name: run for case, run in result.cases}
+    assert isinstance(outcomes["good"], RunResult) and outcomes["good"].ok
+    assert isinstance(outcomes["libcase"], Exception)
+    assert "library-state" in str(outcomes["libcase"])

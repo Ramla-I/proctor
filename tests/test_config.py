@@ -129,3 +129,16 @@ def test_run_provides_validated() -> None:
     data["run"] = {"provides": ["floppy_disk"]}
     with pytest.raises(ConfigError, match="unknown artifact kinds"):
         PipelineConfig.from_dict(data)
+
+
+def test_gate_tests_parsed_and_validated() -> None:
+    data = _pipeline_dict()
+    assert isinstance(data["stages"], dict)
+    assert isinstance(data["stages"]["a"], dict)
+    data["stages"]["a"]["gate_tests"] = False
+    config = PipelineConfig.from_dict(data)
+    assert config.stages["a"].gate_tests is False
+    assert config.stages["b"].gate_tests is None  # unset -> defer to global
+    data["stages"]["a"]["gate_tests"] = "yes"
+    with pytest.raises(ConfigError, match="gate_tests"):
+        PipelineConfig.from_dict(data)

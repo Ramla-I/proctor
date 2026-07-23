@@ -40,6 +40,7 @@ _POLICIES = ("independent", "chained", "merge-per-round")
 class BenchSettings:
     jobs: int = 4
     layout: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_LAYOUT))
+    vectors_path: str = "test_vectors"  # per-case vectors for package synthesis
     rule_set_policy: str = "independent"
 
     @classmethod
@@ -61,6 +62,9 @@ class BenchSettings:
                     f"{sorted(DEFAULT_LAYOUT)} mapped to a subpath"
                 )
             layout[kind] = sub
+        vectors_path = bench_raw.get("vectors_path", "test_vectors")
+        if not isinstance(vectors_path, str) or not vectors_path:
+            raise ConfigError("[bench] vectors_path must be a non-empty string")
         policy = bench_raw.get("rule_set_policy", "independent")
         if policy not in _POLICIES:
             raise ConfigError(f"[bench] rule_set_policy must be one of {_POLICIES}")
@@ -69,34 +73,60 @@ class BenchSettings:
                 f"[bench] rule_set_policy {policy!r} is not implemented yet; "
                 f"use 'independent'"
             )
-        return cls(jobs=jobs, layout=layout, rule_set_policy=policy)
+        return cls(
+            jobs=jobs,
+            layout=layout,
+            vectors_path=vectors_path,
+            rule_set_policy=policy,
+        )
 
 
 @dataclass(frozen=True)
 class BenchCase:
     name: str
     inputs: dict[str, Path]
+    synthesize_tests_from: Path | None = None  # vectors dir, when no package
 
 
 def discover_cases(
-    corpus: Path, provides: tuple[str, ...], layout: dict[str, str]
+    corpus: Path,
+    provides: tuple[str, ...],
+    layout: dict[str, str],
+    *,
+    vectors_path: str = "test_vectors",
 ) -> list[BenchCase]:
     """A case = a directory holding the layout subpath for every
-    provided artifact kind."""
+    provided artifact kind. A missing test package is forgiven when the
+    case carries TRACTOR vectors — the package is synthesized at run
+    time (plan T2)."""
     if not corpus.is_dir():
         raise RunError(f"corpus directory {corpus} does not exist")
     cases: list[BenchCase] = []
     for candidate in sorted(p for p in corpus.rglob("*") if p.is_dir()):
         inputs: dict[str, Path] = {}
+        synthesize: Path | None = None
         for kind in provides:
             sub = candidate / layout[kind]
-            if not sub.exists():
-                break
-            inputs[kind] = sub
+            if sub.exists():
+                inputs[kind] = sub
+                continue
+            vectors = candidate / vectors_path
+            if (
+                kind == "test_package"
+                and vectors.is_dir()
+                and any(p.is_dir() or p.suffix == ".json" for p in vectors.iterdir())
+            ):
+                synthesize = vectors
+                continue
+            break
         else:
             if provides:
                 cases.append(
-                    BenchCase(name=str(candidate.relative_to(corpus)), inputs=inputs)
+                    BenchCase(
+                        name=str(candidate.relative_to(corpus)),
+                        inputs=inputs,
+                        synthesize_tests_from=synthesize,
+                    )
                 )
     # drop nested matches: a case must not contain another case
     names = {c.name for c in cases}
@@ -130,7 +160,12 @@ def run_bench(
     jobs: int | None = None,
 ) -> BenchResult:
     settings = BenchSettings.from_config(config.raw)
-    cases = discover_cases(corpus, config.run.provides, settings.layout)
+    cases = discover_cases(
+        corpus,
+        config.run.provides,
+        settings.layout,
+        vectors_path=settings.vectors_path,
+    )
     if not cases:
         raise RunError(
             f"no cases found under {corpus} for provides="
@@ -144,13 +179,21 @@ def run_bench(
     started = time.monotonic()
 
     def one(case: BenchCase) -> tuple[BenchCase, RunResult | Exception]:
-        run_dir = bench_dir / case.name.replace("/", "__")
+        safe_name = case.name.replace("/", "__")
+        run_dir = bench_dir / safe_name
         try:
+            inputs = dict(case.inputs)
+            if case.synthesize_tests_from is not None:
+                from proctor.testing.vectors import generate_test_package
+
+                package_dir = bench_dir / "_synth_tests" / safe_name
+                generate_test_package(case.synthesize_tests_from, package_dir)
+                inputs["test_package"] = package_dir
             return case, start_run(
                 config,
                 root,
-                name=case.name.replace("/", "__"),
-                supplied_inputs=case.inputs,
+                name=safe_name,
+                supplied_inputs=inputs,
                 config_files=[],
                 overrides=[],
                 item=case.name,
