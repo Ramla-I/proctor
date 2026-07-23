@@ -1,76 +1,52 @@
-FROM ubuntu:20.04
+# Framework container (plan §6, M8): the orchestrator plus everything
+# CRAT and the index crate need, warmed at build time via
+# `proctor warmup`. The legacy translation container lives on master.
+#
+#   docker build -t proctor-framework:dev .
+#   docker run --rm proctor-framework:dev run -c tests/e2e/crat_smoke.toml \
+#     --input-rust tests/e2e/fixtures/001_helloworld/c2rust \
+#     --tests tests/e2e/fixtures/001_helloworld/tests
+
+FROM ubuntu:24.04
 
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
     clang \
+    cmake \
     curl \
-    g++ \
-    gcc \
     git \
     libclang-dev \
     libssl-dev \
-    llvm \
-    locales \
-    make \
+    libz3-dev \
+    llvm-dev \
+    ninja-build \
     pkg-config \
-    sudo \
+    python3 \
     zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 
-RUN locale-gen en_US.UTF-8
-RUN useradd -m -s /bin/bash ubuntu
-RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-
-USER ubuntu
-WORKDIR /home/ubuntu
-ENV LANG="en_US.UTF-8" \
-    PATH="/home/ubuntu/local/bin:/home/ubuntu/.cargo/bin:/home/ubuntu/.local/bin:${PATH}"
-
-COPY --chown=ubuntu:ubuntu cmake-3.31.9-linux-x86_64 local
-COPY --chown=ubuntu:ubuntu ninja local/bin
-COPY --chown=ubuntu:ubuntu Python-3.14.0 Python-3.14.0
-RUN cd Python-3.14.0 \
- && ./configure --prefix=/home/ubuntu/local \
- && make -j \
- && make install \
- && cd .. \
- && rm -rf Python-3.14.0
-RUN pip3 install toml libclang
+RUN useradd -m proctor
+USER proctor
+WORKDIR /home/proctor
+ENV PATH="/home/proctor/.local/bin:/home/proctor/.cargo/bin:${PATH}"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-  | sh -s -- -y -q --default-toolchain none
+  | sh -s -- -y -q --default-toolchain stable
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-RUN git clone https://github.com/Yale-PROCTOR/c2rust \
- && cd c2rust \
- && git checkout tractor-0.21.0 \
- && cargo build --release --bin c2rust-transpile -Z sparse-registry \
- && ln -s ~/c2rust/target/release/c2rust-transpile ~/local/bin
+COPY --chown=proctor:proctor . /home/proctor/proctor
+WORKDIR /home/proctor/proctor
 
-RUN rustup toolchain install nightly-2025-11-11
-RUN rustup toolchain install -c rust-src,rustc-dev,llvm-tools-preview nightly-2025-06-23
+RUN uv sync
+# Warm everything: c2rust-transpile (built from the submodule against
+# the image's LLVM), crat (pulls its pinned nightly via
+# rust-toolchain.toml), stage venvs, and the index crate.
+RUN uv run proctor warmup -c tests/e2e/translation_smoke.toml
 
-COPY --chown=ubuntu:ubuntu Test-Corpus Test-Corpus
-COPY --chown=ubuntu:ubuntu PUBLIC-Test-Corpus PUBLIC-Test-Corpus
-COPY --chown=ubuntu:ubuntu aws-translate aws-translate
-RUN python3 aws-translate/scripts/package/package.py \
-      --root /home/ubuntu/Test-Corpus \
-      -o /home/ubuntu/bundles \
-      -s Public-Tests
-RUN python3 aws-translate/scripts/package/package.py \
-      --root /home/ubuntu/PUBLIC-Test-Corpus \
-      -o /home/ubuntu/PUBLIC-bundles \
-      -s Hidden-Tests
+ARG PROCTOR_IMAGE=proctor-framework:dev
+ENV PROCTOR_IMAGE=${PROCTOR_IMAGE}
 
-RUN git clone https://github.com/Yale-PROCTOR/crat \
- && cd crat \
- && git checkout f598249 \
- && cd deps_crate \
- && cargo build \
- && cd .. \
- && cargo build --release \
- && ln -s ~/crat/crat ~/local/bin \
- && ln -s ~/crat/crat-merge ~/local/bin
-
-RUN rm -rf PUBLIC-Test-Corpus/Public-Tests
-COPY --chown=ubuntu:ubuntu scripts scripts
+ENTRYPOINT ["uv", "run", "proctor"]
+CMD ["--help"]

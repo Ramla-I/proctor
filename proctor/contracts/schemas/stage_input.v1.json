@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Yale-PROCTOR/proctor/schemas/stage_input.v1.json",
+  "title": "proctor stage_input envelope (schema_version 1)",
+  "type": "object",
+  "required": ["schema_version", "run_id", "stage_id", "stage_index", "inputs", "outputs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "stage_id": { "type": "string", "minLength": 1 },
+    "stage_index": { "type": "integer", "minimum": 0 },
+    "item": { "type": ["string", "null"] },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "c_project": { "type": ["string", "null"] },
+        "rust_project": { "type": ["string", "null"] },
+        "test_package": { "type": ["string", "null"] },
+        "rule_set": { "type": ["string", "null"] }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "rust_project": { "type": ["string", "null"] },
+        "rule_set": { "type": ["string", "null"] },
+        "artifacts_dir": { "type": ["string", "null"] }
+      }
+    },
+    "config": { "type": "object" },
+    "framework": {
+      "type": "object",
+      "properties": {
+        "llm": { "type": "object" },
+        "usage_log": { "type": ["string", "null"] },
+        "prompt_library": { "type": ["string", "null"] },
+        "workdir": { "type": ["string", "null"] },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "max_usd": { "type": ["number", "null"] },
+            "max_tokens": { "type": ["integer", "null"] }
+          }
+        },
+        "timeout_s": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

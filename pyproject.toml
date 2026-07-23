@@ -1,0 +1,44 @@
+[project]
+name = "proctor"
+version = "0.1.0"
+description = "Orchestration framework for the PROCTOR C-to-Rust translation pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "tomli-w>=1.2.0",
+]
+
+[project.scripts]
+proctor = "proctor.cli:main"
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.26.0",
+    "mypy>=1.13",
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["proctor"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = ["stages/crat", "stages/c2rust", "tests/e2e/fixtures"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests needing real toolchains and the CRAT submodule (opt-in)",
+]
+addopts = "-m 'not e2e'"

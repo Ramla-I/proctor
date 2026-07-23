@@ -1,0 +1,45 @@
+# Example: an LLM stage over an existing Rust project.
+#
+#   export ANTHROPIC_API_KEY=...        # keys come from env, never config
+#   uv run proctor run -c configs/llm_example.toml \
+#     --input-rust tests/e2e/fixtures/001_helloworld/c2rust
+#
+# Model/provider are config, not code:
+#   --set llm.model="claude-sonnet-5"
+#   --set llm.provider="openai"         # + OPENAI_API_KEY
+# Local/compat servers: set llm.provider="openai" and llm.base_url.
+
+[run]
+provides = ["rust_project"]
+
+[llm]
+provider = "anthropic"
+model = "claude-opus-4-8"
+max_retries = 5
+# api_key_env = "ANTHROPIC_API_KEY"    # override which env var holds the key
+
+# Provider-specific passthrough — merged into the request payload.
+# Anthropic extended thinking:
+#   [llm.extra.thinking]
+#   type = "enabled"
+#   budget_tokens = 8000
+# OpenAI reasoning effort:
+#   [llm.extra]
+#   reasoning_effort = "high"
+
+# $/Mtok for cost in usage records and `proctor report`
+[llm.pricing."anthropic/claude-opus-4-8"]
+input = 15.0
+cached_input = 1.5
+output = 75.0
+
+[pipeline]
+order = ["example_llm"]
+
+[stages.example_llm]
+uses = "stages/example-llm-stage"
+timeout_s = 600
+
+# Per-stage override example (stage wins over global [llm]):
+# [stages.example_llm.llm]
+# model = "claude-haiku-4-5-20251001"

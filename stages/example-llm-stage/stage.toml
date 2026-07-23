@@ -1,0 +1,15 @@
+id = "example_llm"
+version = "0.1.0"
+description = "Example stage using the framework's LLM API: annotates the project with an LLM-written translation-notes file."
+
+exec = ["python3", "main.py"]
+
+[requires]
+rust_project = "required"
+
+[produces]
+rust_project = true
+
+[config]
+source_file = { type = "string", default = "", doc = "file to summarize (default: lib.rs or src/main.rs)" }
+max_source_chars = { type = "integer", default = 20000, doc = "source truncation before prompting" }

@@ -1,0 +1,16 @@
+id = "c2rust"
+version = "0.1.0"
+description = "C2Rust transpilation of a TRACTOR C project (translation component, first half)."
+
+exec = ["python3", "main.py"]
+warmup = ["python3", "main.py", "--build-only"]
+
+[requires]
+c_project = "required"
+
+[produces]
+rust_project = true
+
+[config]
+check_build = { type = "bool", default = true, doc = "cargo build the transpiled project before reporting success" }
+preset = { type = "string", default = "test", doc = "CMake preset to use when CMakePresets.json exists" }

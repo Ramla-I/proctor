@@ -1,0 +1,14 @@
+runs/
+.venv/
+**/target/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+Python-3.14.0
+cmake-3.31.9-linux-x86_64
+ninja
+bundles/
+c2rust-translated/

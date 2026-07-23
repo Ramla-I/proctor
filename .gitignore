@@ -1,3 +1,21 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# rust build artifacts (any crate, any depth)
+target/
+
+# framework outputs
+runs/
+
+# master-branch build artifacts that may linger in the worktree
 Python-3.14.0
 cmake-3.31.9-linux-x86_64
 ninja
+bundles/
+c2rust-translated/
