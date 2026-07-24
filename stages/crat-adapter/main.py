@@ -3,14 +3,16 @@
 
 Builds crat once per submodule commit (cached via a marker file), then
 runs the pass chain over the input Rust project, feeding each pass's
-output to the next. Pass list and flags mirror the legacy
-scripts/transform.py. Purely symbolic: no LLM usage to report.
+output to the next. The default pass list and flags mirror the legacy
+scripts/transform.py and can be overridden in stage config. Purely
+symbolic: no LLM usage to report.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,7 +21,7 @@ import tomllib
 from pathlib import Path
 
 STAGE_ID = "crat"
-STAGE_VERSION = "0.1.0"
+STAGE_VERSION = "0.2.0"
 SCHEMA_VERSION = 1
 
 # pass -> (previous pass, extra flags); "c2rust" marks the chain root.
@@ -56,13 +58,60 @@ class StageFailure(Exception):
 
 
 def plugin_chain(final_pass: str) -> list[str]:
-    if final_pass not in PLUGINS:
+    if not isinstance(final_pass, str) or final_pass not in PLUGINS:
         raise StageFailure(f"unknown crat pass {final_pass!r}")
     chain = [final_pass]
     while PLUGINS[chain[-1]][0] != "c2rust":
         chain.append(PLUGINS[chain[-1]][0])
     chain.reverse()
     return chain
+
+
+def resolve_pass_plan(config: dict) -> list[tuple[str, list[str]]]:
+    if "passes" in config:
+        if "final_pass" in config:
+            raise StageFailure("crat config cannot set both passes and final_pass")
+        passes = config["passes"]
+        if (
+            not isinstance(passes, list)
+            or not passes
+            or not all(
+                isinstance(plugin, str) and plugin in PLUGINS for plugin in passes
+            )
+        ):
+            raise StageFailure(
+                f"passes must be a non-empty list of known CRAT passes: "
+                f"{', '.join(PLUGINS)}"
+            )
+        if len(set(passes)) != len(passes):
+            raise StageFailure("passes must not contain duplicates")
+    else:
+        passes = plugin_chain(config.get("final_pass", "bin"))
+
+    pass_args = config.get("pass_args", {})
+    if not isinstance(pass_args, dict):
+        raise StageFailure("pass_args must be a table of pass-name to argument list")
+    unknown = [name for name in pass_args if name not in PLUGINS]
+    if unknown:
+        raise StageFailure(
+            f"pass_args contains unknown CRAT passes: {', '.join(unknown)}"
+        )
+    unselected = [name for name in pass_args if name not in passes]
+    if unselected:
+        raise StageFailure(
+            f"pass_args contains passes not selected for this run: "
+            f"{', '.join(unselected)}"
+        )
+
+    plan: list[tuple[str, list[str]]] = []
+    for plugin in passes:
+        args = pass_args.get(plugin, PLUGINS[plugin][1])
+        if not isinstance(args, list) or not all(
+            isinstance(arg, str) and arg for arg in args
+        ):
+            raise StageFailure(f"pass_args.{plugin} must be a list of strings")
+        plan.append((plugin, list(args)))
+    return plan
 
 
 def run_logged(
@@ -107,8 +156,6 @@ def ensure_crat_built(crat_dir: Path, log_file: Path) -> Path:
 
 
 def crat_env(crat_dir: Path) -> dict[str, str]:
-    import os
-
     sysroot = subprocess.check_output(
         ["rustc", "--print", "sysroot"], cwd=crat_dir, text=True
     ).strip()
@@ -136,12 +183,12 @@ def run_pass(
     crat_bin: Path,
     env: dict[str, str],
     plugin: str,
+    flags: list[str],
     input_dir: Path,
     output_root: Path,
     log_file: Path,
 ) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
-    _, flags = PLUGINS[plugin]
     command = [
         str(crat_bin),
         "-o",
@@ -207,6 +254,10 @@ def run_stage(envelope: dict) -> dict:
         raise StageFailure(
             f"{src_dir} has no config.toml (crat needs the c2rust-stage config)"
         )
+    plan = resolve_pass_plan(config)
+    check_build = config.get("check_build", True)
+    if not isinstance(check_build, bool):
+        raise StageFailure("check_build must be a boolean")
 
     log_file = Path(artifacts or workdir) / "crat.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -224,19 +275,38 @@ def run_stage(envelope: dict) -> dict:
     build_s = round(time.monotonic() - build_started, 1)
     env = crat_env(crat_dir)
 
-    final_pass = config.get("final_pass", "bin")
-    chain = plugin_chain(final_pass)
     pass_seconds: dict[str, float] = {}
     current = src_dir
-    for plugin in chain:
+    for plugin, flags in plan:
         started = time.monotonic()
         current = run_pass(
-            crat_bin, env, plugin, current, Path(workdir) / plugin, log_file
+            crat_bin, env, plugin, flags, current, Path(workdir) / plugin, log_file
         )
         pass_seconds[plugin] = round(time.monotonic() - started, 2)
 
+    check_metrics: dict[str, float] = {}
+    if check_build:
+        started = time.monotonic()
+        run_logged(
+            ["cargo", "build"],
+            log_file,
+            cwd=current,
+            env={**os.environ, "RUSTFLAGS": "-Awarnings"},
+        )
+        shutil.rmtree(current / "target", ignore_errors=True)
+        check_metrics["check_build_s"] = round(time.monotonic() - started, 2)
+
     shutil.copytree(current, dst)
     manifest = emit_proctor_toml(Path(dst))
+
+    config_used = {
+        "passes": [plugin for plugin, _ in plan],
+        "pass_args": {plugin: flags for plugin, flags in plan},
+        "crat_dir": str(crat_dir),
+        "check_build": check_build,
+    }
+    if "passes" not in config:
+        config_used["final_pass"] = config.get("final_pass", "bin")
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -244,12 +314,13 @@ def run_stage(envelope: dict) -> dict:
         "stage_id": STAGE_ID,
         "stage_version": STAGE_VERSION,
         "outputs": {"rust_project": dst, "rule_set": None},
-        "config_used": {"final_pass": final_pass, "crat_dir": str(crat_dir)},
+        "config_used": config_used,
         "metrics": {
             "crat_commit": git_head(crat_dir),
             "build_s": build_s,
-            "passes": len(chain),
+            "passes": len(plan),
             **manifest,
+            **check_metrics,
             **{f"pass_s.{name}": secs for name, secs in pass_seconds.items()},
         },
         "logs": ["crat.log"],
@@ -260,8 +331,6 @@ def run_stage(envelope: dict) -> dict:
 
 def build_only() -> int:
     """Warmup entry point: build crat, no pipeline work."""
-    import os
-
     adapter_dir = Path(__file__).resolve().parent
     crat_dir = (adapter_dir / "../crat").resolve()
     cache = Path(
