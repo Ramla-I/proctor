@@ -25,6 +25,18 @@ Host toolchain requirements (or use Docker below, which has them all):
 `tests/e2e/README.md` for the libclang/z3 setup with and without sudo,
 and for how the c2rust transpiler is located.
 
+Run the following command to generate test case bundles under
+`tractor-test-corpus/bundles`:
+
+```bash
+python3 \
+  tractor-test-corpus/aws-translate/scripts/package/package.py \
+  -o "$(pwd)/tractor-test-corpus/bundles" \
+  --root tractor-test-corpus/Test-Corpus
+```
+
+You only need to do this when you want to pass a bundle to `c2rust-adapter`.
+
 ## Running the pipeline
 
 One test case, C source to tested Rust:
