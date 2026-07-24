@@ -1,0 +1,17 @@
+# C2Rust only: translate one C project directory or tar archive to Rust.
+#
+#   uv run proctor run -c configs/c2rust.toml \
+#     --input-c tractor-test-corpus/bundles/Public-Tests/B01_organic/bin2hex_lib.tar.gz
+
+[run]
+provides = ["c_project"]
+
+[testing]
+after_each_stage = false
+
+[pipeline]
+order = ["c2rust"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 600

@@ -1,5 +1,5 @@
 id = "crat"
-version = "0.1.0"
+version = "0.2.0"
 description = "CRAT symbolic transformation passes over c2rust output."
 
 exec = ["python3", "main.py"]
@@ -13,4 +13,7 @@ rust_project = true
 
 [config]
 final_pass = { type = "string", default = "bin", doc = "last pass of the chain to run" }
+passes = { type = "array", doc = "exact ordered pass sequence; mutually exclusive with final_pass" }
+pass_args = { type = "table", doc = "per-pass argument lists replacing built-in defaults" }
+check_build = { type = "bool", default = true, doc = "cargo build the final transformed project before reporting success" }
 crat_dir = { type = "string", default = "../crat", doc = "crat checkout, relative to this adapter" }

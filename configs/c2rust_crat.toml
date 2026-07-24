@@ -1,0 +1,34 @@
+# Translate one C project directory or tar archive through C2Rust and CRAT.
+#
+#   uv run proctor run -c configs/c2rust_crat.toml \
+#     --input-c tractor-test-corpus/bundles/Public-Tests/B01_organic/bin2hex_lib.tar.gz
+
+[run]
+provides = ["c_project"]
+
+[testing]
+after_each_stage = false
+
+[pipeline]
+order = ["c2rust", "crat"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 600
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 600
+
+[stages.crat.config]
+passes = [
+  "expand",
+  "extern",
+  "preprocess",
+  "enum",
+  "simpl",
+  "unsafe",
+  "unexpand",
+  "split",
+  "bin",
+]

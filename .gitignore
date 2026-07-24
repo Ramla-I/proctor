@@ -13,9 +13,5 @@ target/
 # framework outputs
 runs/
 
-# master-branch build artifacts that may linger in the worktree
-Python-3.14.0
-cmake-3.31.9-linux-x86_64
-ninja
+# Test-Corpus bundles
 bundles/
-c2rust-translated/

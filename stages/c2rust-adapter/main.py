@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import tomllib
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 STAGE_ID = "c2rust"
-STAGE_VERSION = "0.1.0"
+STAGE_VERSION = "0.1.1"
 SCHEMA_VERSION = 1
 
 
@@ -104,6 +105,46 @@ def find_c_root(c_project: Path) -> Path:
         if (candidate / "CMakeLists.txt").is_file():
             return candidate
     raise StageFailure(f"no CMakeLists.txt under {c_project} or its test_case/")
+
+
+def prepare_c_root(c_project: Path, workdir: Path) -> Path:
+    """Return the buildable C project root, extracting a tar input if needed."""
+    if c_project.is_dir():
+        return find_c_root(c_project)
+    if not c_project.is_file():
+        raise StageFailure(f"C project input {c_project} does not exist")
+
+    extracted = workdir / "c-project"
+    extracted.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(c_project, mode="r:*") as archive:
+            archive.extractall(extracted, filter="data")
+    except (OSError, tarfile.TarError) as exc:
+        raise StageFailure(
+            f"C project input {c_project} is not a readable tar archive: {exc}"
+        ) from exc
+
+    if (extracted / "CMakeLists.txt").is_file():
+        return extracted
+
+    containers = [extracted, *(path for path in extracted.iterdir() if path.is_dir())]
+    roots: list[Path] = []
+    for container in containers:
+        for candidate in (container, container / "test_case"):
+            if (candidate / "CMakeLists.txt").is_file():
+                roots.append(candidate)
+    roots = _unique(roots)
+    if len(roots) == 1:
+        return roots[0]
+    if not roots:
+        raise StageFailure(
+            f"tar archive {c_project} contains no CMakeLists.txt at its root, "
+            "under test_case/, or under one top-level directory"
+        )
+    raise StageFailure(
+        f"tar archive {c_project} contains multiple C project roots: "
+        + ", ".join(str(root.relative_to(extracted)) for root in roots)
+    )
 
 
 def pick_generator() -> str:
@@ -285,7 +326,7 @@ def run_stage(envelope: dict[str, Any]) -> dict[str, Any]:
     work = Path(workdir)
     log_file = Path(artifacts_dir or workdir) / "c2rust.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    source_dir = find_c_root(Path(c_project))
+    source_dir = prepare_c_root(Path(c_project), work)
     timings: dict[str, float] = {}
 
     # 1. cmake configure with the file API enabled
