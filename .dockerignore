@@ -12,3 +12,5 @@ cmake-3.31.9-linux-x86_64
 ninja
 bundles/
 c2rust-translated/
+tractor-test-corpus/
+out/
