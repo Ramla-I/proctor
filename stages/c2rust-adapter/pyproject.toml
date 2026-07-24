@@ -1,6 +1,6 @@
 [project]
 name = "c2rust-adapter"
-version = "0.1.0"
+version = "0.1.1"
 description = "proctor stage: c2rust transpilation (needs libclang for API-function discovery)"
 requires-python = ">=3.12"
 dependencies = [

@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "c2rust-adapter"
-version = "0.1.0"
+version = "0.1.1"
 source = { virtual = "." }
 dependencies = [
     { name = "libclang" },
