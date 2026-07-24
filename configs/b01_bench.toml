@@ -1,0 +1,43 @@
+# Run c2rust -> crat across the whole B01_synthetic corpus directory.
+# One run dir per case; a case succeeds if both stages complete (this
+# branch has no vector gating, so "ok" means translation COMPLETED, not
+# verified correct).
+#
+#   uv run proctor bench -c configs/b01_bench.toml \
+#     --corpus tractor-test-corpus/Test-Corpus/Public-Tests/B01_synthetic --jobs 16
+
+[run]
+provides = ["c_project"]
+
+[testing]
+after_each_stage = false
+
+[bench]
+jobs = 16
+
+[bench.layout]
+c_project = "."   # a corpus case root IS the C project (test_case/ inside)
+
+[pipeline]
+order = ["c2rust", "crat"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 600
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 600
+
+[stages.crat.config]
+passes = [
+  "expand",
+  "extern",
+  "preprocess",
+  "enum",
+  "simpl",
+  "unsafe",
+  "unexpand",
+  "split",
+  "bin",
+]

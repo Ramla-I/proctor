@@ -1,11 +1,26 @@
 # Framework container (plan §6, M8): the orchestrator plus everything
-# CRAT and the index crate need, warmed at build time via
-# `proctor warmup`. The legacy translation container lives on master.
+# CRAT, c2rust, and the index crate need — all built FROM SOURCE at image
+# build time against the image's own LLVM toolchain (like the reference
+# tractor-crat-dockerfile), so none of the bare-host env workarounds
+# (CPATH for builtin headers, userspace z3/libclang) are needed here.
 #
+# Build:
 #   docker build -t proctor-framework:dev .
-#   docker run --rm proctor-framework:dev run -c tests/e2e/crat_smoke.toml \
-#     --input-rust tests/e2e/fixtures/001_helloworld/c2rust \
-#     --tests tests/e2e/fixtures/001_helloworld/tests
+#
+# Run the c2rust -> crat translation on the whole B01_synthetic corpus,
+# mounting the corpus read-only and an output dir for the run results:
+#   mkdir -p out && chmod 777 out
+#   docker run --rm \
+#     -v "$PWD/tractor-test-corpus/Test-Corpus/Public-Tests/B01_synthetic:/corpus:ro" \
+#     -v "$PWD/out:/out" \
+#     proctor-framework:dev \
+#     bench -c configs/b01_bench.toml --corpus /corpus \
+#     --set run.output_dir=/out --jobs 16
+#
+# Single translation:
+#   docker run --rm -v "$PWD/case:/case:ro" -v "$PWD/out:/out" \
+#     proctor-framework:dev run -c configs/c2rust_crat.toml \
+#     --input-c /case --set run.output_dir=/out
 
 FROM ubuntu:24.04
 
@@ -30,7 +45,8 @@ RUN apt-get update \
 RUN useradd -m proctor
 USER proctor
 WORKDIR /home/proctor
-ENV PATH="/home/proctor/.local/bin:/home/proctor/.cargo/bin:${PATH}"
+ENV PATH="/home/proctor/local/bin:/home/proctor/.local/bin:/home/proctor/.cargo/bin:${PATH}"
+RUN mkdir -p /home/proctor/local/bin
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
   | sh -s -- -y -q --default-toolchain stable
@@ -44,6 +60,16 @@ RUN uv sync
 # the image's LLVM), crat (pulls its pinned nightly via
 # rust-toolchain.toml), stage venvs, and the index crate.
 RUN uv run proctor warmup -c tests/e2e/translation_smoke.toml
+
+# Put the built tools on PATH (reference tractor-crat-dockerfile parity):
+# c2rust-transpile is a plain binary; `crat` is a wrapper script that
+# self-resolves its DIR/SYSROOT via readlink, so a symlink works.
+# With c2rust on PATH the adapter resolves it there (native build — no
+# CPATH needed), and it survives a live repo mount.
+RUN ln -sf /home/proctor/proctor/stages/c2rust/target/release/c2rust-transpile \
+      /home/proctor/local/bin/c2rust-transpile \
+ && ln -sf /home/proctor/proctor/stages/crat/crat \
+      /home/proctor/local/bin/crat
 
 ARG PROCTOR_IMAGE=proctor-framework:dev
 ENV PROCTOR_IMAGE=${PROCTOR_IMAGE}
