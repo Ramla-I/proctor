@@ -16,9 +16,15 @@ turning a TRACTOR C project into a tested unsafe-Rust project carrying
 ```bash
 git clone <this repo> && cd proctor
 git submodule update --init stages/crat stages/c2rust
+./fetch_corpus.sh                # fetch the TRACTOR test corpus (DARPA
+                                     # access required); not committed here
 uv sync
 uv run proctor warmup -c tests/e2e/translation_smoke.toml   # pre-build stages
 ```
+
+The TRACTOR test corpus is **not** vendored/submoduled — `./fetch_corpus.sh`
+clones it at the exact pinned commit (add `--with-aws` for the
+`aws-translate` packaging tool used below).
 
 Host toolchain requirements (or use Docker below, which has them all):
 `rustup`, `cmake`, `make`/`ninja`, and CRAT's build deps — see
@@ -61,6 +67,61 @@ uv run proctor resume   runs/<run_id> --from crat  # force re-run from a stage
 uv run proctor bench    -c <cfg> --corpus <dir> --jobs 8   # whole corpus, one run dir per case
 uv run proctor report   runs/ --group-by stage,model       # LLM token/cost aggregation
 ```
+
+### Verifying translations against the TRACTOR vectors
+
+`bench` can check each case's translated Rust against the corpus's own
+test vectors, using TRACTOR's authoritative `runtests.rust` harness
+(vendored under `tools/tractor_runtests/`) — we drive their runner, we
+don't reimplement it. Enable it in config:
+
+```toml
+[bench]
+verify_vectors = true      # verify the final Rust output per case
+verify_all_stages = false  # true: verify every stage's output (per-stage delta)
+```
+
+Each corpus case must carry a `test_vectors/` directory (the standard
+TRACTOR layout). Results land in `bench.json` (`vectors_ok` per case and
+a top-level pass count) and print inline as `vectors 3/3 (crat)`. Needs
+only `cargo`/`cmake`/`ninja` on `PATH` — no Docker or Falco. File-change
+vectors (the Falco path) are deferred; see
+`plan_docs/falco_integration_notes.md`.
+
+### Running on the TRACTOR test corpus
+
+Two scripts at the repo root wrap the whole flow — fetch the corpus and
+bench a suite, no manual `docker run`:
+
+```bash
+./fetch_corpus.sh                         # once: clone the corpus at the pinned commit
+docker build -t proctor-framework:dev .   # once: build the framework image
+
+./bench.sh B02_organic                    # translate + vector-verify a suite, in-container
+./bench.sh B01_synthetic --all            # per-stage delta (c2rust vs crat)
+JOBS=8 ./bench.sh B02_synthetic           # tune parallelism
+```
+
+`./bench.sh <suite> [case] [--all]` runs c2rust → crat over the cases in
+`Public-Tests/<suite>` (an optional case name/regex runs just one; `--all`
+verifies every stage, not just the final). It mounts the full
+`Test-Corpus` (library cases need its `tools/cando2`) plus the repo's
+`configs/` and `proctor/` (so config/code edits apply without an image
+rebuild), and checks each translation against its `test_vectors/` with the
+vendored harness. It prints per-case results and `N/M cases ok`; full
+detail lands in `out/bench-<suite>-<timestamp>/bench.json`.
+
+```bash
+./bench.sh B02_organic arr_del_lib --all   # one case, every stage
+./bench_report.sh B02_organic              # per-stage breakdown of the latest run
+```
+
+`./bench_report.sh [suite | bench-dir]` prints the per-stage vector
+breakdown from a run's `bench.json` (defaults to the latest under `out/`).
+
+Suites available at the pinned corpus: `B01_synthetic`, `B01_organic`,
+`B02_synthetic`, `B02_organic`. B03 and file-change vectors need the
+newer harness — see `plan_docs/falco_integration_notes.md`.
 
 Experiments are config overlays — later files win, `--set` wins over all:
 

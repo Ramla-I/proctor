@@ -15,3 +15,8 @@ runs/
 
 # Test-Corpus bundles
 bundles/
+spike/
+out/
+
+# TRACTOR corpus — fetch with ./fetch_corpus.sh, not committed
+tractor-test-corpus/

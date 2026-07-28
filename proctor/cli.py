@@ -9,12 +9,16 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from proctor import __version__
 from proctor.config.load import ConfigError, load_config
 from proctor.config.model import PipelineConfig
 from proctor.orchestrator.run import RunError, RunResult, resume_run, start_run
 from proctor.orchestrator.validate import validate_pipeline
+
+if TYPE_CHECKING:
+    from proctor.orchestrator.bench import BenchOutcome
 
 _NOT_YET: dict[str, str] = {}
 
@@ -131,6 +135,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             )
 
     name = args.name or Path(args.config[0]).stem
+    # Default the case label to the C-project directory name; stages that
+    # derive artifact names from it (c2rust) rely on the original case name.
+    item = args.item or (
+        supplied["c_project"].name if "c_project" in supplied else None
+    )
     result = start_run(
         config,
         args.root,
@@ -138,7 +147,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         supplied_inputs=supplied,
         config_files=[Path(p) for p in args.config],
         overrides=list(args.overrides),
-        item=args.item,
+        item=item,
     )
     _print_run_result(result)
     return 0 if result.ok else 1
@@ -157,22 +166,54 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     config = _load_pipeline_config(args)
     name = args.name or Path(args.config[0]).stem
     result = run_bench(
-        config, args.root, args.corpus.resolve(), name=name, jobs=args.jobs
+        config,
+        args.root,
+        args.corpus.resolve(),
+        name=name,
+        jobs=args.jobs,
+        match=args.match,
     )
     ok_count = 0
-    for case, run in result.cases:
+    for o in result.outcomes:
+        run = o.run
+        vec = _fmt_vectors(o)
         if isinstance(run, RunResult) and run.ok:
             ok_count += 1
             statuses = ",".join(s.status for s in run.stages)
-            print(f"  ok      {case.name}  [{statuses}]")
+            print(f"  ok      {o.case.name}  [{statuses}]{vec}")
         elif isinstance(run, RunResult):
             failed = next((s for s in run.stages if s.status == "failure"), None)
             detail = f"{failed.stage_id}: {failed.error}" if failed else "?"
-            print(f"  FAILED  {case.name}  — {detail}")
+            print(f"  FAILED  {o.case.name}  — {detail}{vec}")
         else:
-            print(f"  ERROR   {case.name}  — {run}")
-    print(f"{ok_count}/{len(result.cases)} cases ok — {result.bench_dir}")
+            print(f"  ERROR   {o.case.name}  — {run}")
+    print(f"{ok_count}/{len(result.outcomes)} cases ok — {result.bench_dir}")
     return 0 if result.ok else 1
+
+
+def _fmt_vectors(o: BenchOutcome) -> str:
+    """Per-case vector summary for the bench line. One verified stage:
+    ``vectors 3/3 (crat)``. Multiple (verify_all_stages): per stage,
+    ``vectors [c2rust 0/8, crat 8/8]``. Empty when not verified."""
+    if o.vectors is None or not o.vectors.stages:
+        return ""
+    stages = o.vectors.stages
+    if len(stages) == 1:
+        sv = stages[0]
+        if sv.report is None:
+            return f"  vectors ERROR ({sv.stage_id}: {sv.error})"
+        r = sv.report
+        tail = "" if r.build_ok else " build-fail"
+        return f"  vectors {r.passed}/{r.total} ({sv.stage_id}){tail}"
+    parts = []
+    for sv in stages:
+        if sv.report is None:
+            parts.append(f"{sv.stage_id} ERR")
+        else:
+            r = sv.report
+            bf = "" if r.build_ok else " build-fail"
+            parts.append(f"{sv.stage_id} {r.passed}/{r.total}{bf}")
+    return "  vectors [" + ", ".join(parts) + "]"
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -300,6 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_args(bench)
     bench.add_argument("--corpus", type=Path, required=True)
     bench.add_argument("--jobs", type=int, default=None, help="parallel cases")
+    bench.add_argument(
+        "--match",
+        default=None,
+        metavar="REGEX",
+        help="only run cases whose name matches this regex (e.g. one case)",
+    )
     bench.add_argument("--name", help="bench name (default: config file stem)")
     bench.set_defaults(func=_cmd_bench)
 

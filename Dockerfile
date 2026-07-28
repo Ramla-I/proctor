@@ -14,7 +14,7 @@
 #     -v "$PWD/tractor-test-corpus/Test-Corpus/Public-Tests/B01_synthetic:/corpus:ro" \
 #     -v "$PWD/out:/out" \
 #     proctor-framework:dev \
-#     bench -c configs/b01_bench.toml --corpus /corpus \
+#     bench -c configs/bench.toml --corpus /corpus \
 #     --set run.output_dir=/out --jobs 16
 #
 # Single translation:
@@ -50,6 +50,11 @@ RUN mkdir -p /home/proctor/local/bin
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
   | sh -s -- -y -q --default-toolchain stable
+# The tractor-test-corpus (@0319ab0) workspace pins this nightly via its
+# rust-toolchain.toml; the cando test-vector runners build with it. Bake
+# it in so per-case runner builds reuse one toolchain instead of each
+# racing to auto-install it in parallel (which corrupts it).
+RUN rustup toolchain install nightly-2025-11-11 --profile minimal
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 COPY --chown=proctor:proctor . /home/proctor/proctor

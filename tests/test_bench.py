@@ -56,7 +56,7 @@ def test_bench_runs_all_cases(tmp_path: Path) -> None:
     corpus = _corpus(tmp_path, {"s/c1": False, "s/c2": False})
     result = run_bench(_config(), tmp_path, corpus, name="t")
     assert result.ok
-    assert len(result.cases) == 2
+    assert len(result.outcomes) == 2
     summary = json.loads((result.bench_dir / "bench.json").read_text())
     assert summary["ok"] == 2 and summary["total"] == 2
     # each case is a complete, ordinary run dir
@@ -70,7 +70,7 @@ def test_bench_isolates_failures(tmp_path: Path) -> None:
     result = run_bench(_config(), tmp_path, corpus, name="t")
     assert not result.ok
     by_name = {
-        case.name: run for case, run in result.cases if isinstance(run, RunResult)
+        o.case.name: o.run for o in result.outcomes if isinstance(o.run, RunResult)
     }
     assert by_name["good"].ok
     assert not by_name["bad"].ok
@@ -121,3 +121,15 @@ def test_bench_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert code == 0
     assert "1/1 cases ok" in out
+
+
+def test_bench_match_filters_to_one_case(tmp_path: Path) -> None:
+    corpus = _corpus(tmp_path, {"keep": False, "drop": False})
+    result = run_bench(_config(), tmp_path, corpus, name="t", match="keep")
+    assert [o.case.name for o in result.outcomes] == ["keep"]
+
+
+def test_bench_match_no_cases_errors(tmp_path: Path) -> None:
+    corpus = _corpus(tmp_path, {"a": False})
+    with pytest.raises(RunError, match="matching"):
+        run_bench(_config(), tmp_path, corpus, name="t", match="nope")
