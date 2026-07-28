@@ -59,24 +59,34 @@ JUnit reporter are untouched. We drive their runner; we don't reimplement it.
 
 The newer orchestrator spawns a Docker container per vector, so it runs at
 **host level** (needs `nix` + `docker`) — it cannot run nested inside the
-framework container. Three entry points:
+framework container. Entry points:
 
 ```bash
 # 1. Fetch the newer corpus (Yale @ no-falco) -> tractor-test-corpus-newer/
 ./fetch_corpus.sh --no-falco
 
-# 2. Verify a case, Falco-free (C reference, or a translation with --rust):
+# 2. Bench a suite — the newer-cando2 equivalent of ./bench.sh. Translates
+#    each case (c2rust -> crat) in the framework container, then verifies each
+#    translation against the newer corpus at host level, Falco-free:
+./bench_no_falco.sh B03_organic
+./bench_no_falco.sh B01_synthetic 001_helloworld    # one case (name is a regex)
+
+# 3. Verify a single case directly (C reference, or a translation with --rust):
 ./no_falco_verify.sh Public-Tests/B03_organic/array_list
 ./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust_dir>
 
-# 3. Programmatic: proctor.testing.vector_harness.run_vectors_no_falco(...)
+# 4. Programmatic: proctor.testing.vector_harness.run_vectors_no_falco(...)
 #    stages translated_rust into the case slot and drives
 #    `nix run tools/test_runner -- --rust --no-falco`, parsing the JUnit
 #    (config/build phase entries folded into the build outcome).
 ```
 
-`fetch_corpus.sh` pins the exact `no-falco` commit; `run_vectors_no_falco`
-reuses the same `parse_junit` as the vendored direct harness.
+`bench_no_falco.sh` translates in the container (reusing `configs/bench.toml`)
+and delegates host-level verification to
+`proctor.testing.no_falco_bench` (stage each case's final Rust into the
+corpus slot, one `nix run` over the selected cases, per-case rollup).
+`fetch_corpus.sh` pins the exact `no-falco` commit; the engine reuses the
+same `parse_junit` as the vendored direct harness.
 
 ## 4. Verified results (this host)
 

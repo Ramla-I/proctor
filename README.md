@@ -141,17 +141,21 @@ on the host (it can't run nested inside the framework container):
 ./fetch_corpus.sh --no-falco                      # once: Yale corpus @ no-falco
                                                   #   -> tractor-test-corpus-newer/
 
-# verify a C reference (harness smoke, no translation needed):
-./no_falco_verify.sh Public-Tests/B03_organic/array_list
+# bench a whole suite: like ./bench.sh, but the newer cando2 / B03 harness.
+# Translates each case (c2rust -> crat) in the container, then verifies each
+# translation against the newer corpus at host level (Falco-free):
+./bench_no_falco.sh B03_organic                      # whole suite
+./bench_no_falco.sh B01_synthetic 001_helloworld     # one case (name is a regex)
 
-# verify a translation (a stage's Rust output) with --rust:
-./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust_dir>
+# or verify a single case directly:
+./no_falco_verify.sh Public-Tests/B03_organic/array_list          # C reference
+./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust>
 ```
 
-`proctor.testing.vector_harness.run_vectors_no_falco()` is the programmatic
-entry point (same JUnit parsing as the vendored harness). See
-`plan_docs/falco_integration_notes.md` for the design, the exact
-`Test-Corpus` changes, and current verification results.
+`bench_no_falco.sh` is the batch equivalent of `bench.sh` on the newer corpus;
+`proctor.testing.vector_harness.run_vectors_no_falco()` is the single-case
+programmatic entry point. See `plan_docs/falco_integration_notes.md` for the
+design, the exact `Test-Corpus` changes, and current verification results.
 
 Experiments are config overlays — later files win, `--set` wins over all:
 
