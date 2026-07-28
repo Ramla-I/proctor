@@ -13,11 +13,12 @@
 # plan_docs/falco_integration_notes.md.
 #
 # The verbose build/harness output goes to a log; only a per-case summary
-# (like bench.sh) is printed. Name the log by passing a *.log path last.
+# (like bench.sh) is printed. Each run gets its own results dir under out/
+# holding the log, JUnit, and JSON. Override the log path with a *.log arg.
 #
 #   ./fetch_corpus.sh --no-falco                     # once: fetch the newer corpus
 #   ./bench_no_falco.sh B03_organic                  # whole suite
-#   ./bench_no_falco.sh B03_organic run.log          # whole suite, named log
+#   ./bench_no_falco.sh B03_organic run.log          # whole suite, custom log path
 #   ./bench_no_falco.sh B01_synthetic 001_helloworld # one case (name is a regex)
 #   JOBS=8 ./bench_no_falco.sh B02_organic
 #
@@ -59,10 +60,18 @@ command -v nix    >/dev/null || { echo "error: nix not found (needed for tools/t
 command -v docker >/dev/null || { echo "error: docker not found" >&2; exit 1; }
 
 mkdir -p "$ROOT/out" && chmod 777 "$ROOT/out"
-LOG="${LOG:-$ROOT/out/bench_no_falco-$SUITE.log}"
+
+# One host-owned results dir per run — holds the log, JUnit, and JSON. Made
+# up front (with its own timestamp) so the log can live here from the start;
+# the translation half's bench-* dir, created by the container, stays
+# separate (we only read translations from it).
+RESULTS="$ROOT/out/bench_no_falco-$SUITE-$(date +%Y%m%dT%H%M%S)"
+mkdir -p "$RESULTS"
+LOG="${LOG:-$RESULTS/bench_no_falco.log}"
 mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
-echo "log: $LOG"
+echo "results: $RESULTS"
+echo "log:     $LOG"
 
 # --- 1. translate the suite in the framework container (no vectors) ---------
 echo ">> translating $SUITE (c2rust -> crat) ..."
@@ -78,15 +87,9 @@ docker run --rm \
   --set run.output_dir=/out \
   --jobs "${JOBS:-16}" >>"$LOG" 2>&1
 
-# newest bench dir for this suite (created by the container, so it may be
-# owned by the container's user — we only read translations from it).
+# newest translation dir for this suite (created by the container)
 BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
 [ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOG" >&2; exit 1; }
-
-# Host-owned results dir (the host-level harness writes the JUnit here; it
-# can't write into the container-owned bench dir).
-RESULTS="$ROOT/out/nofalco-$(basename "$BENCH_DIR")"
-mkdir -p "$RESULTS"
 
 # --- 2. verify each translation against the newer corpus, Falco-free --------
 echo ">> verifying against the newer corpus (--no-falco) ..."
