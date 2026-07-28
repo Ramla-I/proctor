@@ -93,3 +93,32 @@ def test_rollup_junit_build_failure_marks_not_ok(tmp_path: Path) -> None:
     )
     (r,) = nfb.rollup_junit(junit)
     assert not r.build_ok and not r.ok
+
+
+def test_rollup_junit_captures_skipped_names(tmp_path: Path) -> None:
+    junit = tmp_path / "j.xml"
+    junit.write_text(
+        "<testsuites><testsuite name='c'>"
+        "<testcase name='build'/>"
+        "<testcase name='test_write'><skipped/></testcase>"
+        "<testcase name='v1'/>"
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    (r,) = nfb.rollup_junit(junit)
+    assert r.skipped_names == ["test_write"]
+    assert r.skipped == 1 and r.passed == 1
+
+
+def test_count_fs_skips(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    tv = corpus / "Public-Tests" / "Examples" / "fs_example" / "test_vectors"
+    (tv / "test_write").mkdir(parents=True)
+    (tv / "test_write" / "file_changes.tar.gz").write_bytes(b"x")  # file-change
+    (tv / "test_read").mkdir()  # dir vector, no tarfile
+    n = nfb.count_fs_skips(
+        corpus,
+        "Public-Tests/Examples/fs_example",
+        ["test_write", "test_read", "test1.json"],  # json = plain file vector
+    )
+    assert n == 1

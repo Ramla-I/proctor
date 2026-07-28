@@ -20,7 +20,7 @@ import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from proctor.testing.vector_compare import stage_rust_outputs
@@ -67,11 +67,15 @@ def run_suite_no_falco(
     junit_out: Path,
     *,
     env: dict[str, str] | None = None,
+    log_file: Path | None = None,
     timeout_s: int = 3600,
 ) -> subprocess.CompletedProcess[str]:
     """Verify the given staged ``cases`` with ``tools/test_runner
     --no-falco`` in a single host-level ``nix run`` (one ``--subset`` per
-    case, so stale slots in other cases are ignored)."""
+    case, so stale slots in other cases are ignored).
+
+    ``log_file``: if given, the harness's (verbose) stdout/stderr is
+    appended there instead of streamed to the console."""
     # Resolve to absolute paths: `nix run <relative>` is read as a flake
     # (GitHub) ref, not a local path; and the corpus/junit paths must be
     # unambiguous regardless of the harness's cwd.
@@ -101,17 +105,33 @@ def run_suite_no_falco(
     ]
     for case in cases:
         cmd += ["--subset", f"Public-Tests/{suite}/{case}"]
+    if log_file is not None:
+        with open(log_file, "a", encoding="utf-8") as lf:
+            lf.write(">> " + " ".join(cmd) + "\n")
+            lf.flush()
+            return subprocess.run(
+                cmd,
+                env=env,
+                text=True,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                timeout=timeout_s,
+            )
     print(">> " + " ".join(cmd), flush=True)
     return subprocess.run(cmd, env=env, text=True, timeout=timeout_s)
 
 
 @dataclass
 class CaseRollup:
-    case: str
+    case: str  # "Public-Tests/<suite>/<case>"
     passed: int
-    skipped: int
     failed: int
     build_ok: bool
+    skipped_names: list[str] = field(default_factory=list)
+
+    @property
+    def skipped(self) -> int:
+        return len(self.skipped_names)
 
     @property
     def ok(self) -> bool:
@@ -119,13 +139,14 @@ class CaseRollup:
 
 
 def rollup_junit(junit_path: Path) -> list[CaseRollup]:
-    """Per-case pass/skip/fail from the newer harness's JUnit. Phase
-    pseudo-tests (config/build/build-runners) drive ``build_ok``, not the
-    vector counts."""
+    """Per-case pass/fail + skipped vector names from the newer harness's
+    JUnit. Phase pseudo-tests (config/build/build-runners) drive
+    ``build_ok``, not the vector counts."""
     root = ET.parse(junit_path).getroot()
     out: list[CaseRollup] = []
     for ts in root.iter("testsuite"):
-        passed = skipped = failed = 0
+        passed = failed = 0
+        skipped_names: list[str] = []
         build_ok = True
         for tc in ts.findall("testcase"):
             name = tc.get("name", "")
@@ -136,13 +157,27 @@ def rollup_junit(junit_path: Path) -> list[CaseRollup]:
                     build_ok = False
                 continue
             if tag == "skipped":
-                skipped += 1
+                skipped_names.append(name)
             elif tag in ("failure", "error"):
                 failed += 1
             else:
                 passed += 1
-        out.append(CaseRollup(ts.get("name", ""), passed, skipped, failed, build_ok))
+        out.append(
+            CaseRollup(ts.get("name", ""), passed, failed, build_ok, skipped_names)
+        )
     return out
+
+
+def count_fs_skips(corpus: Path, case_full: str, skipped_names: list[str]) -> int:
+    """How many of a case's skipped vectors are file-change vectors — i.e.
+    carry ``file_changes.tar.gz`` (the Falco-only ones that ``--no-falco``
+    skips). ``case_full`` is ``Public-Tests/<suite>/<case>``."""
+    test_vectors = corpus / case_full / "test_vectors"
+    return sum(
+        1
+        for name in skipped_names
+        if (test_vectors / name / "file_changes.tar.gz").is_file()
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -154,54 +189,82 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--suite", required=True, help="suite name, e.g. B03_organic")
     ap.add_argument("--match", default=None, help="regex to select cases")
     ap.add_argument("--junit-out", type=Path, required=True)
+    ap.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="append the harness's verbose output here instead of the console",
+    )
     args = ap.parse_args(argv)
 
-    staged = stage_translations(args.bench_dir, args.corpus, args.suite, args.match)
+    corpus = args.corpus.resolve()
+    staged = stage_translations(args.bench_dir, corpus, args.suite, args.match)
     if not staged:
         print("no translated cases to verify (translation failed for all?)")
         return 1
-    print(f"staged {len(staged)} translation(s): {', '.join(staged)}")
+    print(f"verifying {len(staged)} translation(s) with tools/test_runner --no-falco")
 
-    proc = run_suite_no_falco(args.corpus, args.suite, staged, args.junit_out)
+    proc = run_suite_no_falco(
+        corpus, args.suite, staged, args.junit_out, log_file=args.log_file
+    )
     if not args.junit_out.is_file():
         print(f"newer harness produced no JUnit (exit {proc.returncode})")
         return 2
 
     rollups = rollup_junit(args.junit_out)
-    print("\nper-case vectors (newer harness, --no-falco):")
-    tot_p = tot_s = tot_f = n_ok = 0
+    tot_p = tot_s = tot_fs = tot_f = n_ok = 0
+    case_rows: list[dict] = []
     for r in sorted(rollups, key=lambda r: r.case):
-        flag = "ok " if r.ok else "FAIL"
-        build = "" if r.build_ok else " build-failed"
+        leaf = r.case.split("/")[-1]
+        fs = count_fs_skips(corpus, r.case, r.skipped_names)
+        other = r.skipped - fs
+        total = r.passed + r.skipped + r.failed
+        notes = []
+        if fs:
+            notes.append(f"{fs} fs-skip")
+        if other:
+            notes.append(f"{other} skip")
+        if not r.build_ok:
+            notes.append("build-fail")
+        tail = f"  ({', '.join(notes)})" if notes else ""
         print(
-            f"  [{flag}] {r.case}: pass={r.passed} skip={r.skipped} fail={r.failed}{build}"
+            f"  {'ok    ' if r.ok else 'FAILED'}  {leaf}  vectors {r.passed}/{total}{tail}"
         )
         tot_p += r.passed
         tot_s += r.skipped
+        tot_fs += fs
         tot_f += r.failed
         n_ok += 1 if r.ok else 0
+        case_rows.append(
+            {
+                "case": r.case,
+                "ok": r.ok,
+                "passed": r.passed,
+                "skipped": r.skipped,
+                "fs_skipped": fs,
+                "failed": r.failed,
+                "build_ok": r.build_ok,
+            }
+        )
     print(
-        f"\n{n_ok}/{len(rollups)} cases ok  |  "
-        f"vectors: {tot_p} pass, {tot_s} skip, {tot_f} fail"
+        f"{n_ok}/{len(rollups)} cases ok  |  "
+        f"vectors: {tot_p} pass, {tot_s} skip ({tot_fs} file-change), {tot_f} fail"
     )
+    if tot_fs:
+        print("(fs-skip = file-change vector, needs Falco; skipped under --no-falco)")
 
     summary = {
         "suite": args.suite,
         "staged": staged,
         "cases_ok": n_ok,
         "cases_total": len(rollups),
-        "vectors": {"passed": tot_p, "skipped": tot_s, "failed": tot_f},
-        "cases": [
-            {
-                "case": r.case,
-                "ok": r.ok,
-                "passed": r.passed,
-                "skipped": r.skipped,
-                "failed": r.failed,
-                "build_ok": r.build_ok,
-            }
-            for r in rollups
-        ],
+        "vectors": {
+            "passed": tot_p,
+            "skipped": tot_s,
+            "fs_skipped": tot_fs,
+            "failed": tot_f,
+        },
+        "cases": case_rows,
     }
     # Alongside the JUnit (a host-writable dir): the bench dir itself may be
     # owned by the container that ran the translation half.
