@@ -1,185 +1,181 @@
-# Falco / Full-Harness Integration — Deferred: Blockers & Setup Notes
+# Running the TRACTOR vectors without Falco — status, design, results
 
-Status: **deferred.** Binary + library vectors are verified now via the
-old direct harness (`proctor/testing/vector_harness.py` driving the
-vendored `tools/tractor_runtests`). This document is the single home for
-everything **left to do** on vectors: what the newer Falco-based
-orchestrator adds, what blocks it today, the recommended unblock, and
-setup notes so re-setup is fast.
+**Status: `--no-falco` is implemented and verified.** The newer TRACTOR
+corpus's own orchestrator (`tools/test_runner`) now runs Falco-free via a
+`--no-falco` flag on **Yale-PROCTOR/Test-Corpus** branch
+[`no-falco`](https://github.com/Yale-PROCTOR/Test-Corpus/tree/no-falco)
+(`c627c09`, = DARPA `main` @ `3e3b487` (B03) + our changes). This unblocks
+**state / stdout / library-state** vectors on B01/B02/**B03** — including
+the newer-corpus library cases — with **no Falco, no privileged container,
+no eBPF**. The only remaining Falco-only capability is **file-change
+vectors** (see §5).
 
-## 1. What Falco adds
+This replaces the old "everything is deferred" plan: what used to be the
+recommended unblock (§7 of the previous version) is done.
 
-The new `runtests.orchestrator` runs each vector in a Docker container and
-uses **Falco** (syscall monitoring, `modern_ebpf` engine) to capture the
-program's **filesystem side-effects** — files created / modified /
-deleted — and compares them against the vector's recorded
-`file_changes.tar.gz`.
+## 1. What Falco did, and what `--no-falco` changes
 
-This is the **only** capability the old direct harness lacks: **file-change
-vectors** (directory vectors carrying a `setup` script and/or
-`file_changes.tar.gz`). Binary (stdout/stderr/rc) and library (cando
-lib-state) vectors do **not** need Falco.
+The orchestrator ran a privileged **Falco** sidecar (`modern_ebpf`) to
+capture each vector's **filesystem side-effects** (files created / modified
+/ deleted) and diff them against the vector's `file_changes.tar.gz`. That is
+the **only** capability Falco provides. Binary (stdout/stderr/rc) and
+library (cando lib-state) comparison is done by **cando**, not Falco.
 
-## 2. How the new flow works (for when we return)
+Falco touched the harness on exactly two axes, both now conditioned on
+`--no-falco`:
 
-Their blessed invocation (from the corpus CI, `.github/workflows/ci.yml`):
+1. **Orchestrator** starts the Falco container (`FalcoManager.start()`) and
+   mounts its log dir into every per-vector container.
+2. **Exec side** reads that log (`get_filesystem_changes()`), unconditionally.
+
+`--no-falco` neutralizes both: no sidecar (so none of Falco's privileges,
+eBPF, or the `falco.yaml` bind-mount), and the exec side doesn't read the
+log. Vectors that assert on filesystem changes (carry `file_changes.tar.gz`)
+are **skipped** — not falsely passed or failed.
+
+## 2. The change set (Test-Corpus `no-falco` branch)
+
+Localized to `tools/test_runner`, ~85 lines:
+
+| File | Change |
+| --- | --- |
+| `orchestrator/cli.py`, `exec_test_vector/cli.py` | the `--no-falco` flag |
+| `orchestrator/falco.py` | `NullFalcoManager` — same `start`/`stop`/`get_host_log_dir` interface, but starts no container and never mounts `falco.yaml`; hands out an empty (unused) log dir so per-vector containers still mount a valid path |
+| `orchestrator/__main__.py` | pick `NullFalcoManager` when `--no-falco` |
+| `orchestrator/run_phases.py`, `container.py` | thread `no_falco` → the per-vector container args (alongside the existing `no_compare`) |
+| `exec_test_vector/__main__.py` | under `--no-falco`, don't read the Falco log; **skip** file-change vectors instead of misreporting them |
+
+Plus one **robustness fix** needed to run on hosts where the orchestrator's
+`TMPDIR` isn't `/tmp` (see §6):
+
+| File | Change |
+| --- | --- |
+| `orchestrator/container.py` | force `TMPDIR=/tmp` in the vector-container env (the container has its own tmpfs `/tmp`); don't inherit the host's `TMPDIR`, which need not exist in-container |
+
+Nothing else in the harness is modified — cando, discovery, build, and the
+JUnit reporter are untouched. We drive their runner; we don't reimplement it.
+
+## 3. Using it from PROCTOR
+
+The newer orchestrator spawns a Docker container per vector, so it runs at
+**host level** (needs `nix` + `docker`) — it cannot run nested inside the
+framework container. Three entry points:
+
+```bash
+# 1. Fetch the newer corpus (Yale @ no-falco) -> tractor-test-corpus-newer/
+./fetch_corpus.sh --no-falco
+
+# 2. Verify a case, Falco-free (C reference, or a translation with --rust):
+./no_falco_verify.sh Public-Tests/B03_organic/array_list
+./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust_dir>
+
+# 3. Programmatic: proctor.testing.vector_harness.run_vectors_no_falco(...)
+#    stages translated_rust into the case slot and drives
+#    `nix run tools/test_runner -- --rust --no-falco`, parsing the JUnit
+#    (config/build phase entries folded into the build outcome).
+```
+
+`fetch_corpus.sh` pins the exact `no-falco` commit; `run_vectors_no_falco`
+reuses the same `parse_junit` as the vendored direct harness.
+
+## 4. Verified results (this host)
+
+`nix run ./tools/test_runner -- --no-falco …`, Docker 29.3.1, no Falco:
+
+| Case | kind | vectors |
+| --- | --- | --- |
+| `B01_synthetic/001_helloworld` | binary | 3 pass |
+| `B01_synthetic/002_stdin_echo` | binary | 4 pass |
+| `Examples/filesystem_example` | binary | 2 pass, **6 file-change skip** |
+| `B01_synthetic/001_helloworld_lib` | library | 1 pass |
+| `Examples/filesystem_example_lib` | library | 2 pass, **8 file-change skip** |
+| `B03_organic/array_list` | binary | 20 pass |
+| `B03_organic/array_list_lib` | library | 20 pass |
+| `B01_synthetic/001_helloworld` **`--rust`** | translation | 3 pass |
+
+**Totals: 55 vectors pass, 14 file-change skip, 0 fail.** The `--rust` row is
+the full workflow: a real c2rust→crat translation staged into the case,
+built by the newer harness (using the translation's own nested nightly
+toolchain — the corpus's `1.94.1` root pin is for cando2/runners), driver
+run in a container, stdout vectors compared. No Falco container starts in
+any run; file-change vectors are cleanly skipped, everything else compares
+exactly as with Falco.
+
+Note the **B03 library** cases (`array_list_lib`): these were previously
+*blocked* on the old direct harness (new cando2 needs rustc 1.94.1 and isn't
+behavior-compatible with the 0319ab0 harness). On the newer harness with
+`--no-falco` they pass — the newer harness natively matches that corpus era.
+
+## 5. Remaining limitation — file-change vectors (Falco-only)
+
+Vectors carrying `file_changes.tar.gz` (55 across the corpus: `Examples/`,
+`B03_organic/chibicc`, …) assert on filesystem side-effects, which only
+Falco can observe. Under `--no-falco` they are **skipped**. Verifying them
+still needs the full Falco stack; the setup that got furthest is preserved
+in §7 for whenever that gap is worth closing. This is the *only* thing
+`--no-falco` gives up.
+
+## 6. Host requirements & the snap-Docker/`TMPDIR` gotcha
+
+The host-level runner needs:
+- **Docker** at host level (spawns a container per vector).
+- **Nix** to build/load the `exec_test_vector` image and provide
+  cmake/ninja/cargo/clang (`nix run ./tools/test_runner`). Single-user Nix
+  is fine (see §7).
+
+**Gotcha (snap Docker):** the `docker` snap is AppArmor-confined and cannot
+bind-mount sources under `/tmp` (they arrive empty in-container). The
+orchestrator makes its per-vector volumes under `$TMPDIR`, so on such hosts
+you **must** run with `TMPDIR=$HOME/…` — otherwise every `/workspace` mount
+is empty ("`cando_runner doesn't exist`"). `no_falco_verify.sh` defaults
+`TMPDIR` to a `$HOME` path for this reason. The corpus source can stay
+anywhere host-readable; only the volume sources (`$TMPDIR`) must be
+snap-mountable. The container-`TMPDIR` fix in §2 is what lets a `$HOME`
+`TMPDIR` work without leaking into cando. (A non-snap Docker with
+`TMPDIR=/tmp`, as in TRACTOR CI, avoids the gotcha entirely.)
+
+Retire note: once this newer harness is the vector engine, the vendored
+`tools/tractor_runtests` (the Falco-free *direct* harness) can be removed —
+it exists only to give a Falco-free path independent of the corpus, which
+`--no-falco` now provides on the corpus's own runner. See
+`tools/tractor_runtests/PROVENANCE.md`.
+
+## 7. Full-Falco setup (only for the file-change-vector gap)
+
+Kept for whenever file-change vectors are worth verifying. The blessed
+invocation (corpus CI) is:
 
 ```
 nix run ./tools/test_runner -- --rust --subset <case> --junit-xml out.xml --keep-going --asan
 ```
 
-That single command:
-1. Provisions cmake/ninja/cargo via the Nix flake (`tools/test_runner/flake.nix`).
-2. Builds the `exec_test_vector` Docker image (`dockerTools.buildLayeredImage`) and `docker load`s it.
-3. Starts a **Falco container** (`falcosecurity/falco:0.43.1`, digest
-   `sha256:b4166a61…`) with `cap_add=[SYS_ADMIN, SYS_RESOURCE, SYS_PTRACE]`,
-   mounting `/sys/kernel/tracing`, host `/proc`, host `/etc`, the docker
-   socket, and its config `falco.yaml` → `/etc/falco/falco.yaml`.
-4. Runs **one container per test vector** (`exec_test_vector` image), which
-   runs cando and reads the Falco log to diff filesystem changes.
+which provisions cmake/ninja/cargo via the flake, builds+loads the
+`exec_test_vector` image, starts a **Falco** sidecar
+(`falcosecurity/falco:0.43.1`, `cap_add=[SYS_ADMIN, SYS_RESOURCE,
+SYS_PTRACE]`, mounting `/sys/kernel/tracing`, host `/proc`, `/etc`, the
+docker socket, and `falco.yaml`), and runs one container per vector.
 
-So the runner is itself a **Docker + Falco orchestrator** — it must run at
-**host level** (or a machine with real Nix + Docker), never nested inside
-the framework container.
+### Known blocker if you re-enable Falco
 
-## 3. What blocks it right now
-
-### 3.1 Primary blocker — `falco.yaml` bind-mount fails on Docker 29.x
-
-Starting the Falco container fails with runc:
+Starting the Falco sidecar mounts `falco.yaml` (a single **file**) into the
+container. On **Docker 29.x** this fails:
 
 ```
-error mounting ".../falco_configs/falco.yaml" to rootfs at "/etc/falco/falco.yaml":
-flags=MS_BIND|MS_REC: not a directory:
-Are you trying to mount a directory onto a file (or vice-versa)?
+error mounting ".../falco.yaml" to rootfs at "/etc/falco/falco.yaml":
+flags=MS_BIND|MS_REC: not a directory
 ```
 
-Both source and destination are **regular files** (verified), so this is
-anomalous. It reproduces with **Docker 29.3.1** on this host but works on
-TRACTOR's CI runner (older Docker). Leading hypothesis: Docker 29.x
-changed `MS_REC`-on-a-single-file bind handling.
+(both ends are regular files; works on TRACTOR's older-Docker CI). And a
+snap Docker additionally can't mount the `/nix`-store `falco.yaml` path. So
+re-enabling Falco here needs either a non-snap, older Docker, or a fix to
+how `falco.yaml` is mounted. `--no-falco` sidesteps all of this — which is
+why it's the path for everything except file-change vectors.
 
-Full write-up + suggested fixes + a `--no-falco` feature request:
-`../notes/tractor-test-runner-falco-mount-bug.md` (to file with TRACTOR).
+### Setup that was proven to work (single-user Nix)
 
-### 3.2 Falco is mandatory (no opt-out)
-
-`orchestrator/__main__.py` calls `FalcoManager().start()` unconditionally,
-and `exec_test_vector/__main__.py` calls `get_filesystem_changes()`
-unconditionally. There is **no `--no-falco` flag** — so even a pure-stdout
-case can't run without Falco (and thus can't dodge §3.1). Raising a
-`--no-falco` request with TRACTOR is the cleanest unblock; do **not** patch
-their harness ourselves.
-
-### 3.3 Infrastructure requirements (present but heavy)
-
-- **Docker** at host level (the runner spins containers via the SDK).
-- **Falco** needs privileged caps + `/sys/kernel/tracing` + host `/proc`
-  + eBPF (kernel ≥ ~5.8; this host's 6.8 is fine).
-- **Nix** to build the `exec_test_vector` image (see §4).
-
-## 4. What we PROVED works (so re-setup is fast)
-
-On this host (Ubuntu 24.04.3, kernel 6.8, Docker 29.3.1), everything below
-already works — only §3.1 remains:
-
-- **Unprivileged userns**: `kernel.unprivileged_userns_clone = 1`.
-- **Rootless Nix, two ways**:
-  - `nix-portable` (no `/nix`, no sudo) — bootstraps Nix, **builds and
-    `docker load`s the `exec_test_vector` image successfully**. But its
-    `/nix` store is virtual (namespace-only), so containers launched by the
-    host daemon can't mount `/nix` paths → the falco.yaml mount fails there
-    *and* for that reason.
-  - **Real single-user Nix** (chosen): one-time `sudo mkdir -m 0755 /nix &&
-    sudo chown $USER /nix`, then the official installer `--no-daemon`.
-    Nix 2.35.1 installed; **every `nix run` since is rootless** (the one
-    sudo was only to create the `/nix` mountpoint at `/`). With a real
-    `/nix`, store paths are host-visible — this removes the *virtual-store*
-    cause, leaving only the Docker-29 `MS_REC` mount bug (§3.1).
-- **Falco + Docker**: the Falco container starts/stops cleanly on this host
-  when the mount succeeds (proven in a hybrid run); cando executes vectors
-  inside the `exec_test_vector` container.
-- **Build phase**: cmake/ninja/cargo provisioned; the corpus's cando
-  runners build.
-
-### Hybrid that got furthest (diagnostic only, not the target)
-
-Running the **orchestrator from a pip install** (real host paths) while
-using the **Nix-built image** got past the falco.yaml mount (real pip path,
-not `/nix`), started Falco, and **executed cando** — failing later only on
-env-detail mismatches (falco log path) that arise because the hybrid isn't
-their blessed flow. Do **not** productionize the hybrid; it means
-reverse-engineering their harness. It only confirmed the stack runs here.
-
-## 5. To set it up again (checklist)
-
-1. Ensure `/nix` exists and is user-owned (one-time sudo), single-user Nix
-   installed (`. ~/.nix-profile/etc/profile.d/nix.sh`). Rootless thereafter.
-2. Ensure Docker works for the user, unprivileged userns on, kernel ≥ 5.8.
-3. Lay the case out under `<corpus>/Public-Tests/<Bxx>/<case>/` with
-   `test_case/`, `test_vectors/`, `translated_rust/` (the stage output),
-   and `runner/` for library cases.
-4. Run their command from the corpus root:
-   `nix run --extra-experimental-features "nix-command flakes"
-   ./tools/test_runner -- --rust --subset <rel> --junit-xml out.xml --keep-going`
-5. **If §3.1 still bites** (Docker 29.x): confirmed blocker → needs TRACTOR
-   fix or `--no-falco`, or run on a host with an older Docker/runc where
-   the file bind-mount succeeds. Check whether a newer/patched
-   `tools/test_runner` has resolved it before retrying.
-
-## 6. When to revisit
-
-Trigger a return to the full flow when **any** of:
-- TRACTOR fixes the `falco.yaml` mount (or the corpus bumps to a Docker
-  version where it works), or
-- **`--no-falco` lands** (see §7 — the recommended unblock), or
-- we run on a machine matching their CI (older Docker + real Nix), or
-- we specifically need **file-change vector** verification (the only gap
-  of the old direct harness).
-
-## 7. Recommended unblock: `--no-falco` on the newer harness
-
-The cleanest path — and what unblocks everything below — is a
-**`--no-falco` flag on the newer orchestrator** (`tools/test_runner`),
-upstreamed to TRACTOR.
-
-**Invasiveness (assessed against the orchestrator source): moderate,
-localized — ~5 files, not a rewrite.** Falco is concentrated in dedicated
-modules (`falco.py`, `parse_falco.py`); a null-object `NullFalcoManager`
-plus one real conditional does it:
-- `orchestrator/cli.py`: add the flag;
-- `orchestrator/__main__.py`: pick the null manager;
-- `orchestrator/container.py`: **skip the `falco.yaml` mount + Falco
-  sidecar** — this is the Docker-29 bug site;
-- `exec_test_vector/__main__.py`: skip `get_filesystem_changes`; run only
-  cando state + stdout; mark file-change vectors `skipped`;
-- `run_phases.py` / `shutdown_handler.py`: no-op via the null manager.
-
-Payoff: it **sidesteps the Docker-29 mount bug**, drops the
-privileged/eBPF requirement, and the newer harness **natively matches**
-the newer corpus era — the new cando2 (`lib_fn!`, rustc 1.94.1), the
-`_cando_librunner` runner naming, and **B03**. So it yields B01/B02/B03
-**state + stdout** vectors on TRACTOR's current harness, no back-port.
-
-### B03 library cases depend on this
-
-B03 was added in the new-cando2 era. Its library runners need the newer
-cando2, which (a) requires **rustc 1.94.1** (the 0319ab0 toolchain is
-1.93.0) and (b) is **not behavior-compatible** with the old harness —
-swapping it into the 0319ab0 corpus builds but regresses B01/B02 library
-cases (42/42 → 1/42 clean, verified). So B03 **binary** cases can run on
-the direct harness today; B03 **library** cases wait for `--no-falco` +
-the newer harness. (File-change vectors stay the separate Falco-only gap.)
-
-### The engine swap, when we return
-
-`vector_harness.py` gains a second engine that drives the newer
-`tools/test_runner` (with `--no-falco`) instead of `runtests.rust` — same
-corpus-staging and JUnit-parsing.
-
-Once that newer harness is up and running (and it matches the corpus pin
-anyway), the vendored **`tools/tractor_runtests`** copy can be **removed**:
-it exists only to give us the Falco-free direct harness independent of
-the corpus. At that point vector verification drives the corpus's own
-`tools/test_runner` (`--no-falco`), so the duplicated runner is no longer
-needed. See `tools/tractor_runtests/PROVENANCE.md`.
+- One-time `sudo mkdir -m 0755 /nix && sudo chown $USER /nix`, then the
+  official installer `--no-daemon`; every `nix run` after is rootless.
+- Docker usable by the user; unprivileged userns on; kernel ≥ ~5.8.
+- Lay each case out under `<corpus>/Public-Tests/<Bxx>/<case>/` with
+  `test_case/`, `test_vectors/`, `translated_rust/` (the stage output), and
+  `runner/` for library cases.

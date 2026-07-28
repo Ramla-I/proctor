@@ -7,8 +7,11 @@ harness) and parse its JUnit output. Binary vectors run the translated
 ``driver`` directly; library vectors run the case's real cando ``runner``.
 Neither needs Docker/Falco/root — only cargo/cmake/ninja on PATH.
 
-The Falco-based orchestrator (file-change vectors, and the newer-corpus
-library cases) is deferred — see ``plan_docs/falco_integration_notes.md``.
+The newer corpus's own orchestrator (``tools/test_runner``) is also
+supported, Falco-free, via ``run_vectors_no_falco`` — it runs at host
+level (nix + docker) and covers the newer-corpus library cases and B03;
+only file-change vectors remain Falco-only. See
+``plan_docs/falco_integration_notes.md``.
 """
 
 from __future__ import annotations
@@ -318,6 +321,121 @@ def run_vectors_in_place(
             f"{(proc.stderr or proc.stdout)[-2000:]}"
         )
     return parse_junit(junit_out.read_text(encoding="utf-8"), case=str(case_rel))
+
+
+# --- newer-harness engine (Falco-free via tools/test_runner --no-falco) ---
+#
+# The newer TRACTOR corpus ships ``tools/test_runner``, a Docker
+# orchestrator that natively matches the newer corpus era: cando2
+# (``lib_fn!``, rustc 1.94.1), the ``_cando_librunner`` naming, and B03.
+# Yale's ``no-falco`` branch adds ``--no-falco`` to it, so it runs
+# state/stdout/lib-state vectors without Falco (file-change vectors are
+# skipped). Unlike ``run_vectors`` / ``run_vectors_in_place`` (pure-Python,
+# run anywhere), this orchestrator spawns a container per vector, so it runs
+# at HOST level and needs ``nix`` + ``docker`` on PATH — it cannot run nested
+# inside the framework container. Fetch the corpus with
+# ``./fetch_corpus.sh --no-falco``; see ``plan_docs/falco_integration_notes.md``.
+
+#: phase pseudo-tests the newer orchestrator emits per case alongside the
+#: real vectors; folded into the report's build outcome, not counted.
+_NEWER_PHASE_NAMES = frozenset({"config", "build", "build-runners"})
+
+
+def _fold_phase_entries(report: VectorReport) -> VectorReport:
+    """Collapse the newer harness's ``config``/``build``/``build-runners``
+    phase entries into a single ``build`` result (failed if any phase
+    failed), so ``passed``/``failed``/``total`` count only real vectors
+    while ``build_ok`` still reflects the build."""
+    phase_fail = any(
+        r.status in ("fail", "error")
+        for r in report.results
+        if r.name in _NEWER_PHASE_NAMES
+    )
+    vectors = tuple(r for r in report.results if r.name not in _NEWER_PHASE_NAMES)
+    build = VectorResult(name="build", status="fail" if phase_fail else "pass")
+    return VectorReport(
+        case=report.case, results=(build, *vectors), raw_junit=report.raw_junit
+    )
+
+
+def run_vectors_no_falco(
+    translated_rust: Path,
+    case_dir: Path,
+    *,
+    corpus_root: Path,
+    junit_out: Path,
+    timeout_s: int = 1800,
+    env: dict[str, str] | None = None,
+) -> VectorReport:
+    """Verify a translation with the newer harness (``tools/test_runner
+    --no-falco``), which runs at host level.
+
+    Drops ``translated_rust`` into the case's ``translated_rust`` slot in
+    place inside the newer corpus workspace at ``corpus_root``, then runs
+    ``nix run <corpus_root>/tools/test_runner -- --rust --no-falco
+    --subset <case_rel>``. ``case_dir`` must live under ``corpus_root``.
+
+    Requires ``nix`` and ``docker`` reachable via ``env`` (default:
+    ``os.environ``). File-change vectors come back skipped; the build/config
+    phase entries are folded into the report's build outcome.
+    """
+    corpus_root = corpus_root.resolve()
+    case_dir = case_dir.resolve()
+    try:
+        case_rel = case_dir.relative_to(corpus_root)
+    except ValueError as exc:
+        raise VectorHarnessError(
+            f"{case_dir} is not under corpus root {corpus_root}"
+        ) from exc
+    if not (translated_rust / "Cargo.toml").is_file():
+        raise VectorHarnessError(
+            f"{translated_rust} is not a Cargo project (no Cargo.toml)"
+        )
+    if not (case_dir / "test_vectors").is_dir():
+        raise VectorHarnessError(f"{case_dir} has no test_vectors/")
+    runner = corpus_root / "tools" / "test_runner"
+    if not (runner / "flake.nix").is_file():
+        raise VectorHarnessError(
+            f"{runner} is not the newer tools/test_runner (no flake.nix); "
+            "fetch it with ./fetch_corpus.sh --no-falco"
+        )
+
+    slot = case_dir / "translated_rust"
+    if slot.exists():
+        shutil.rmtree(slot)
+    shutil.copytree(translated_rust, slot)
+
+    junit_out.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            "nix",
+            "run",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            str(runner),
+            "--",
+            "--rust",
+            "--no-falco",
+            "--keep-going",
+            "--root",
+            str(corpus_root),
+            "--subset",
+            str(case_rel),
+            "--junit-xml",
+            str(junit_out),
+        ],
+        env=env or os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+    if not junit_out.is_file():
+        raise VectorHarnessError(
+            f"newer harness produced no JUnit (exit {proc.returncode}):\n"
+            f"{(proc.stderr or proc.stdout)[-2000:]}"
+        )
+    report = parse_junit(junit_out.read_text(encoding="utf-8"), case=str(case_rel))
+    return _fold_phase_entries(report)
 
 
 @dataclass(frozen=True)

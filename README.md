@@ -85,8 +85,9 @@ Each corpus case must carry a `test_vectors/` directory (the standard
 TRACTOR layout). Results land in `bench.json` (`vectors_ok` per case and
 a top-level pass count) and print inline as `vectors 3/3 (crat)`. Needs
 only `cargo`/`cmake`/`ninja` on `PATH` — no Docker or Falco. File-change
-vectors (the Falco path) are deferred; see
-`plan_docs/falco_integration_notes.md`.
+vectors need Falco (the one remaining gap); B03 and the newer-corpus
+library cases can be verified Falco-free with the newer harness — see
+"Verifying without Falco" below and `plan_docs/falco_integration_notes.md`.
 
 ### Running on the TRACTOR test corpus
 
@@ -120,8 +121,37 @@ detail lands in `out/bench-<suite>-<timestamp>/bench.json`.
 breakdown from a run's `bench.json` (defaults to the latest under `out/`).
 
 Suites available at the pinned corpus: `B01_synthetic`, `B01_organic`,
-`B02_synthetic`, `B02_organic`. B03 and file-change vectors need the
-newer harness — see `plan_docs/falco_integration_notes.md`.
+`B02_synthetic`, `B02_organic`. B03 lives in the newer corpus; verify it
+(and any case) Falco-free with the newer harness — see the next section.
+
+### Verifying without Falco (newer corpus, incl. B03)
+
+The newer TRACTOR corpus ships its own orchestrator (`tools/test_runner`),
+which natively matches that era — cando2 (`lib_fn!`, rustc 1.94.1), the
+`_cando_librunner` naming, and **B03**. Yale's `no-falco` branch of
+`Test-Corpus` adds a `--no-falco` flag so it runs state / stdout /
+library-state vectors **without Falco**; only file-change vectors (those
+carrying `file_changes.tar.gz`) are skipped.
+
+Unlike the vendored harness above, this orchestrator spawns a Docker
+container per vector, so it runs at **host level** and needs `nix` + `docker`
+on the host (it can't run nested inside the framework container):
+
+```bash
+./fetch_corpus.sh --no-falco                      # once: Yale corpus @ no-falco
+                                                  #   -> tractor-test-corpus-newer/
+
+# verify a C reference (harness smoke, no translation needed):
+./no_falco_verify.sh Public-Tests/B03_organic/array_list
+
+# verify a translation (a stage's Rust output) with --rust:
+./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust_dir>
+```
+
+`proctor.testing.vector_harness.run_vectors_no_falco()` is the programmatic
+entry point (same JUnit parsing as the vendored harness). See
+`plan_docs/falco_integration_notes.md` for the design, the exact
+`Test-Corpus` changes, and current verification results.
 
 Experiments are config overlays — later files win, `--set` wins over all:
 
