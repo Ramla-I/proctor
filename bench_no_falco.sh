@@ -98,16 +98,21 @@ docker run --rm \
 
 # newest translation dir for this suite (created by the container). It holds
 # the per-case, per-stage outputs (<case>/stages/NN-<stage>/out/rust) — the
-# same layout bench.sh produces. It's container-owned, so we can't write our
-# log/JUnit/JSON into it; link it into the results dir so everything's
-# reachable from one place, as results/translations.
-#
-# NOTE: those linked files are owned by the container's `proctor` user, so
-# they are READ-ONLY to the host (same as bench.sh's out/bench-* output). The
-# symlink is a view, not a copy — to edit a translation, copy it out first:
-#   cp -r <results>/translations/<case> ~/edit-<case>
+# same layout bench.sh produces.
 BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
 [ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOG" >&2; exit 1; }
+
+# The bench CLI ran as the container's `proctor` user (uid 1001), so the dir
+# it just created is owned by that uid, not you — leaving it unreadable-to-write
+# and undeletable from the host. Chown it to the invoking host user (needs
+# root, hence a throwaway root container) so all of this run's output —
+# translations included — is yours to read, edit, and delete.
+docker run --rm --user root -v "$ROOT/out:/out" --entrypoint chown \
+  proctor-framework:dev -R "$(id -u):$(id -g)" "/out/$(basename "$BENCH_DIR")" \
+  || echo "warning: couldn't chown $BENCH_DIR to you; it stays container-owned"
+
+# Link the (now host-owned) translations into the results dir so everything
+# for this run is reachable and editable from one place, as results/translations.
 ln -sfn "$BENCH_DIR" "$RESULTS/translations"
 
 # --- 2. verify each translation against the newer corpus, Falco-free --------
@@ -119,4 +124,4 @@ uv run python -m proctor.testing.no_falco_bench \
   "${MATCH[@]}" \
   --junit-out "$RESULTS/no_falco.xml" \
   --log-file "$LOG"
-echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"); read-only, copy to edit)"
+echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"))"
