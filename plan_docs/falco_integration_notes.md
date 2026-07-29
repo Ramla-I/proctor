@@ -81,12 +81,22 @@ framework container. Entry points:
 #    (config/build phase entries folded into the build outcome).
 ```
 
-`bench_no_falco.sh` translates in the container (reusing `configs/bench.toml`)
-and delegates host-level verification to
-`proctor.testing.no_falco_bench` (stage each case's final Rust into the
-corpus slot, one `nix run` over the selected cases, per-case rollup).
-`fetch_corpus.sh` pins the exact `no-falco` commit; the engine reuses the
-same `parse_junit` as the vendored direct harness.
+`bench_no_falco.sh` translates in the container (default `configs/bench.toml`,
+a plain c2rust → crat; `CONFIG=configs/c2rust_crat_absrec.toml` adds the LLM
+`abstraction_recovery` stage — the Dockerfile installs the `claude` CLI and the
+script forwards `ANTHROPIC_API_KEY`) and delegates host-level verification to
+`proctor.testing.no_falco_bench` (stage each case's final Rust into the corpus
+slot, one `nix run` over the selected cases, per-case rollup). Each run is one
+self-contained dir, `out/bench-<suite>-<pid>-<stamp>/`, chowned to the host
+user: the per-case translations plus `bench.json` (translation outcome),
+`verify.json` + `verify.xml` (the verification), and `run.log`. `bench_report.sh`
+reads `verify.json` for a per-case breakdown.
+
+Concurrency: translations are independent, so different-case runs translate in
+parallel; only the verify step is serialized (an exclusive lock), because the
+harness removes its vector containers by a shared label and builds in the one
+shared corpus workspace. `fetch_corpus.sh` pins the exact `no-falco` commit; the
+engine reuses the same `parse_junit` as the vendored direct harness.
 
 ## 4. Verified results (this host)
 

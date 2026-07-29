@@ -141,16 +141,29 @@ on the host (it can't run nested inside the framework container):
 ./fetch_corpus.sh --no-falco                      # once: Yale corpus @ no-falco
                                                   #   -> tractor-test-corpus-newer/
 
-# bench a whole suite: like ./bench.sh, but the newer cando2 / B03 harness.
+# bench a suite: like ./bench.sh, but the newer cando2 / B03 harness.
 # Translates each case (c2rust -> crat) in the container, then verifies each
 # translation against the newer corpus at host level (Falco-free):
 ./bench_no_falco.sh B03_organic                      # whole suite
 ./bench_no_falco.sh B01_synthetic 001_helloworld     # one case (name is a regex)
+./bench_report.sh                                    # per-case breakdown of the latest run
+
+# add the LLM abstraction_recovery stage (needs the claude CLI in the image,
+# which the Dockerfile installs, plus ANTHROPIC_API_KEY in your env):
+CONFIG=configs/c2rust_crat_absrec.toml ./bench_no_falco.sh B03_organic array_list
 
 # or verify a single case directly:
 ./no_falco_verify.sh Public-Tests/B03_organic/array_list          # C reference
 ./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust>
 ```
+
+Each run is one self-contained dir owned by you, `out/bench-<suite>-<pid>-<stamp>/`:
+the per-case translations plus `bench.json` (did it translate), `verify.json` +
+`verify.xml` (the `--no-falco` vector results), and `run.log`. Runs on different
+cases translate in **parallel**; only the verify step serializes (TRACTOR's
+harness isn't concurrency-safe). Default config is a plain c2rust → crat
+translation (`configs/bench.toml`); `CONFIG=configs/c2rust_crat_absrec.toml`
+adds the LLM `abstraction_recovery` stage.
 
 `bench_no_falco.sh` is the batch equivalent of `bench.sh` on the newer corpus;
 `proctor.testing.vector_harness.run_vectors_no_falco()` is the single-case
