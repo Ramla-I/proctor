@@ -12,9 +12,10 @@
 # host level; file-change vectors are skipped (Falco-only). See
 # plan_docs/falco_integration_notes.md.
 #
-# The verbose build/harness output goes to a log; only a per-case summary
-# (like bench.sh) is printed. Each run gets its own results dir under out/
-# holding the log, JUnit, and JSON. Override the log path with a *.log arg.
+# The verbose build/harness output goes to a log; only a per-case summary (like
+# bench.sh) is printed. Each run is a single self-contained dir under out/
+# (out/bench-<suite>-<stamp>) holding the per-case translations plus the log,
+# JUnit, and JSON. Override the log path with a *.log arg.
 #
 #   ./fetch_corpus.sh --no-falco                     # once: fetch the newer corpus
 #   ./bench_no_falco.sh B03_organic                  # whole suite
@@ -73,17 +74,17 @@ if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
   exit 1
 fi
 
-# One host-owned results dir per run — holds the log, JUnit, and JSON. Made
-# up front (with its own timestamp) so the log can live here from the start;
-# the translation half's bench-* dir, created by the container, stays
-# separate (we only read translations from it).
-RESULTS="$ROOT/out/bench_no_falco-$SUITE-$(date +%Y%m%dT%H%M%S)"
-mkdir -p "$RESULTS"
-LOG="${LOG:-$RESULTS/bench_no_falco.log}"
-mkdir -p "$(dirname "$LOG")"
-: > "$LOG"
-echo "results: $RESULTS"
-echo "log:     $LOG"
+# The bench CLI (translation) creates the run's dir itself, out/bench-<suite>-
+# <stamp>, owned by the container user; we chown it to you afterward and drop
+# the log/JUnit/JSON in there too, so each run is ONE self-contained dir (like
+# bench.sh). The log is written during translation, before that dir exists, so
+# buffer it in a temp file and move it in after — unless you named a log path.
+if [ -n "$LOG" ]; then
+  mkdir -p "$(dirname "$LOG")"; : > "$LOG"
+  LOGTMP="$LOG"
+else
+  LOGTMP="$(mktemp "$TMPDIR/bench_no_falco-XXXXXX.log")"
+fi
 
 # --- 1. translate the suite in the framework container -----------------------
 # Pipeline config (override with CONFIG=... ). The default runs the full
@@ -110,27 +111,29 @@ docker run --rm \
   "${MATCH[@]}" \
   --set run.output_dir=/out \
   --set bench.layout.c_project=. \
-  --jobs "${JOBS:-16}" >>"$LOG" 2>&1
+  --jobs "${JOBS:-16}" >>"$LOGTMP" 2>&1
 set -e
 
-# newest translation dir for this suite (created by the container). It holds
-# the per-case, per-stage outputs (<case>/stages/NN-<stage>/out/rust) — the
-# same layout bench.sh produces.
+# The run dir the bench CLI just created. It holds the per-case, per-stage
+# outputs (<case>/stages/NN-<stage>/out/rust) — the same layout bench.sh
+# produces.
 BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
-[ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOG" >&2; exit 1; }
+[ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOGTMP" >&2; exit 1; }
 
-# The bench CLI ran as the container's `proctor` user (uid 1001), so the dir
-# it just created is owned by that uid, not you — leaving it unreadable-to-write
-# and undeletable from the host. Chown it to the invoking host user (needs
-# root, hence a throwaway root container) so all of this run's output —
-# translations included — is yours to read, edit, and delete.
+# The bench CLI ran as the container's `proctor` user (uid 1001), so this dir
+# is owned by that uid, not you. Chown it to the invoking host user (needs
+# root, hence a throwaway root container) so the whole run dir — translations
+# and the verify artifacts we add next — is yours to read, edit, and delete.
 docker run --rm --user root -v "$ROOT/out:/out" --entrypoint chown \
   proctor-framework:dev -R "$(id -u):$(id -g)" "/out/$(basename "$BENCH_DIR")" \
   || echo "warning: couldn't chown $BENCH_DIR to you; it stays container-owned"
 
-# Link the (now host-owned) translations into the results dir so everything
-# for this run is reachable and editable from one place, as results/translations.
-ln -sfn "$BENCH_DIR" "$RESULTS/translations"
+# Settle the log into the (now host-owned) run dir, unless a custom path was
+# given. The verify writes its JUnit + JSON here too — one self-contained dir.
+if [ -z "$LOG" ]; then
+  LOG="$BENCH_DIR/bench_no_falco.log"
+  mv "$LOGTMP" "$LOG"
+fi
 
 # --- 2. verify each translation against the newer corpus, Falco-free --------
 echo ">> verifying against the newer corpus (--no-falco) ..."
@@ -139,6 +142,6 @@ uv run python -m proctor.testing.no_falco_bench \
   --corpus "$CORPUS" \
   --suite "$SUITE" \
   "${MATCH[@]}" \
-  --junit-out "$RESULTS/no_falco.xml" \
+  --junit-out "$BENCH_DIR/no_falco.xml" \
   --log-file "$LOG"
-echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"))"
+echo "run dir: $BENCH_DIR  (translations + log + JUnit + JSON)"
