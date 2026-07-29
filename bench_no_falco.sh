@@ -3,8 +3,8 @@
 # orchestrator (tools/test_runner --no-falco) — i.e. the newer cando2, rustc
 # 1.94.1, and B03 — instead of the vendored direct harness. Two halves:
 #
-#   1. TRANSLATE each case (c2rust -> crat) IN the framework container,
-#      reusing configs/bench.toml (translation only), then
+#   1. TRANSLATE each case IN the framework container (default config
+#      c2rust -> crat -> abstraction_recovery; override with CONFIG=...), then
 #   2. VERIFY each translation against the newer corpus at HOST level
 #      (nix + docker, Falco-free) via proctor.testing.no_falco_bench.
 #
@@ -73,18 +73,27 @@ mkdir -p "$(dirname "$LOG")"
 echo "results: $RESULTS"
 echo "log:     $LOG"
 
-# --- 1. translate the suite in the framework container (no vectors) ---------
-echo ">> translating $SUITE (c2rust -> crat) ..."
+# --- 1. translate the suite in the framework container -----------------------
+# Pipeline config (override with CONFIG=... ). The default runs the full
+# component pipeline incl. abstraction_recovery (LLM); the image ships the
+# claude CLI and we forward ANTHROPIC_API_KEY below. Use CONFIG=configs/bench.toml
+# for a plain c2rust -> crat translation with no LLM.
+CONFIG="${CONFIG:-configs/c2rust_crat_absrec.toml}"
+TARGET="$SUITE"
+[ -n "$CASE" ] && TARGET="$SUITE/$CASE"
+echo ">> translating $TARGET  [$(basename "$CONFIG" .toml)] ..."
 docker run --rm \
+  -e ANTHROPIC_API_KEY \
   -v "$CORPUS:/corpus:ro" \
   -v "$ROOT/out:/out" \
   -v "$ROOT/configs:/home/proctor/proctor/configs:ro" \
   -v "$ROOT/proctor:/home/proctor/proctor/proctor:ro" \
   proctor-framework:dev \
-  bench -c configs/bench.toml \
+  bench -c "$CONFIG" \
   --corpus "/corpus/Public-Tests/$SUITE" --name "$SUITE" \
   "${MATCH[@]}" \
   --set run.output_dir=/out \
+  --set bench.layout.c_project=. \
   --jobs "${JOBS:-16}" >>"$LOG" 2>&1
 
 # newest translation dir for this suite (created by the container)
