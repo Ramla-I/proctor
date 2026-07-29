@@ -3,8 +3,9 @@
 # orchestrator (tools/test_runner --no-falco) — i.e. the newer cando2, rustc
 # 1.94.1, and B03 — instead of the vendored direct harness. Two halves:
 #
-#   1. TRANSLATE each case IN the framework container (default config
-#      c2rust -> crat -> abstraction_recovery; override with CONFIG=...), then
+#   1. TRANSLATE each case IN the framework container (default c2rust -> crat;
+#      set CONFIG=configs/c2rust_crat_absrec.toml to add the LLM
+#      abstraction_recovery stage), then
 #   2. VERIFY each translation against the newer corpus at HOST level
 #      (nix + docker, Falco-free) via proctor.testing.no_falco_bench.
 #
@@ -87,11 +88,11 @@ else
 fi
 
 # --- 1. translate the suite in the framework container -----------------------
-# Pipeline config (override with CONFIG=... ). The default runs the full
-# component pipeline incl. abstraction_recovery (LLM); the image ships the
-# claude CLI and we forward ANTHROPIC_API_KEY below. Use CONFIG=configs/bench.toml
-# for a plain c2rust -> crat translation with no LLM.
-CONFIG="${CONFIG:-configs/c2rust_crat_absrec.toml}"
+# Pipeline config (override with CONFIG=... ). The default is a plain
+# c2rust -> crat translation (no LLM). Set CONFIG=configs/c2rust_crat_absrec.toml
+# to add the abstraction_recovery stage (LLM via claude — the image ships the
+# CLI and we forward ANTHROPIC_API_KEY below; billed per case).
+CONFIG="${CONFIG:-configs/bench.toml}"
 RUNTAG="$$"   # our PID: a per-run tag so parallel runs get distinct bench dirs
 TARGET="$SUITE"
 [ -n "$CASE" ] && TARGET="$SUITE/$CASE"
