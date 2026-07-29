@@ -100,7 +100,12 @@ docker run --rm \
 # the per-case, per-stage outputs (<case>/stages/NN-<stage>/out/rust) — the
 # same layout bench.sh produces. It's container-owned, so we can't write our
 # log/JUnit/JSON into it; link it into the results dir so everything's
-# reachable from one place.
+# reachable from one place, as results/translations.
+#
+# NOTE: those linked files are owned by the container's `proctor` user, so
+# they are READ-ONLY to the host (same as bench.sh's out/bench-* output). The
+# symlink is a view, not a copy — to edit a translation, copy it out first:
+#   cp -r <results>/translations/<case> ~/edit-<case>
 BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
 [ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOG" >&2; exit 1; }
 ln -sfn "$BENCH_DIR" "$RESULTS/translations"
@@ -114,4 +119,4 @@ uv run python -m proctor.testing.no_falco_bench \
   "${MATCH[@]}" \
   --junit-out "$RESULTS/no_falco.xml" \
   --log-file "$LOG"
-echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"))"
+echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"); read-only, copy to edit)"
