@@ -12,10 +12,15 @@
 # host level; file-change vectors are skipped (Falco-only). See
 # plan_docs/falco_integration_notes.md.
 #
+# Concurrency: translations are independent, so runs on different cases
+# translate in PARALLEL; only the verify step is serialized (an exclusive lock),
+# because TRACTOR's harness removes its vector containers by a shared label and
+# builds in the one shared corpus workspace — it isn't concurrency-safe.
+#
 # The verbose build/harness output goes to a log; only a per-case summary (like
 # bench.sh) is printed. Each run is a single self-contained dir under out/
-# (out/bench-<suite>-<stamp>) holding the per-case translations plus the log,
-# JUnit, and JSON. Override the log path with a *.log arg.
+# (out/bench-<suite>-<pid>-<stamp>) holding the per-case translations plus the
+# log, JUnit, and JSON. Override the log path with a *.log arg.
 #
 #   ./fetch_corpus.sh --no-falco                     # once: fetch the newer corpus
 #   ./bench_no_falco.sh B03_organic                  # whole suite
@@ -62,19 +67,7 @@ command -v docker >/dev/null || { echo "error: docker not found" >&2; exit 1; }
 
 mkdir -p "$ROOT/out" && chmod 777 "$ROOT/out"
 
-# Serialize runs on this host: they stage into the one shared corpus
-# (translated_rust slots) and the newer harness removes its vector containers
-# by a shared label, so two runs at once on the same corpus corrupt each other
-# (cross-chowned bench dirs, containers pulled out from under each other). Take
-# an exclusive, non-blocking lock; fail fast if another run holds it.
-exec 9>"$ROOT/out/.bench_no_falco.lock"
-if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
-  echo "error: another bench_no_falco run is in progress (the corpus is shared)." >&2
-  echo "       wait for it to finish, then retry." >&2
-  exit 1
-fi
-
-# The bench CLI (translation) creates the run's dir itself, out/bench-<suite>-
+# The bench CLI (translation) creates the run's dir itself, out/bench-<name>-
 # <stamp>, owned by the container user; we chown it to you afterward and drop
 # the log/JUnit/JSON in there too, so each run is ONE self-contained dir (like
 # bench.sh). The log is written during translation, before that dir exists, so
@@ -92,6 +85,7 @@ fi
 # claude CLI and we forward ANTHROPIC_API_KEY below. Use CONFIG=configs/bench.toml
 # for a plain c2rust -> crat translation with no LLM.
 CONFIG="${CONFIG:-configs/c2rust_crat_absrec.toml}"
+RUNTAG="$$"   # our PID: a per-run tag so parallel runs get distinct bench dirs
 TARGET="$SUITE"
 [ -n "$CASE" ] && TARGET="$SUITE/$CASE"
 echo ">> translating $TARGET  [$(basename "$CONFIG" .toml)] ..."
@@ -107,17 +101,17 @@ docker run --rm \
   -v "$ROOT/proctor:/home/proctor/proctor/proctor:ro" \
   proctor-framework:dev \
   bench -c "$CONFIG" \
-  --corpus "/corpus/Public-Tests/$SUITE" --name "$SUITE" \
+  --corpus "/corpus/Public-Tests/$SUITE" --name "$SUITE-$RUNTAG" \
   "${MATCH[@]}" \
   --set run.output_dir=/out \
   --set bench.layout.c_project=. \
   --jobs "${JOBS:-16}" >>"$LOGTMP" 2>&1
 set -e
 
-# The run dir the bench CLI just created. It holds the per-case, per-stage
-# outputs (<case>/stages/NN-<stage>/out/rust) — the same layout bench.sh
-# produces.
-BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
+# This run's dir (its unique --name tag makes it unambiguous even when other
+# runs translate in parallel). It holds the per-case, per-stage outputs
+# (<case>/stages/NN-<stage>/out/rust) — the same layout bench.sh produces.
+BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE-$RUNTAG"-* 2>/dev/null | head -1 || true)"
 [ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOGTMP" >&2; exit 1; }
 
 # The bench CLI ran as the container's `proctor` user (uid 1001), so this dir
@@ -136,7 +130,16 @@ if [ -z "$LOG" ]; then
 fi
 
 # --- 2. verify each translation against the newer corpus, Falco-free --------
+# Serialize just this step: the newer harness removes its vector containers by a
+# shared label and builds cando runners in the one shared corpus workspace, so
+# two verifies at once corrupt each other. Translations above already ran in
+# parallel; here we wait our turn behind any other run's verify.
 echo ">> verifying against the newer corpus (--no-falco) ..."
+exec 9>"$ROOT/out/.bench_no_falco.verify.lock"
+if ! flock -n 9; then
+  echo "   (another run is verifying — the harness isn't concurrency-safe; waiting our turn)"
+  flock 9
+fi
 uv run python -m proctor.testing.no_falco_bench \
   --bench-dir "$BENCH_DIR" \
   --corpus "$CORPUS" \
