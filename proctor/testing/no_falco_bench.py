@@ -266,9 +266,9 @@ def main(argv: list[str] | None = None) -> int:
         },
         "cases": case_rows,
     }
-    # Alongside the JUnit (a host-writable dir): the bench dir itself may be
-    # owned by the container that ran the translation half.
-    out_json = args.junit_out.resolve().parent / "bench_no_falco.json"
+    # Next to the JUnit, sharing its stem (e.g. verify.xml -> verify.json), in
+    # that host-writable dir.
+    out_json = args.junit_out.resolve().with_suffix(".json")
     out_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"\njson: {out_json}")
     if args.log_file is not None:

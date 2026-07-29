@@ -125,7 +125,7 @@ docker run --rm --user root -v "$ROOT/out:/out" --entrypoint chown \
 # Settle the log into the (now host-owned) run dir, unless a custom path was
 # given. The verify writes its JUnit + JSON here too — one self-contained dir.
 if [ -z "$LOG" ]; then
-  LOG="$BENCH_DIR/bench_no_falco.log"
+  LOG="$BENCH_DIR/run.log"
   mv "$LOGTMP" "$LOG"
 fi
 
@@ -145,6 +145,6 @@ uv run python -m proctor.testing.no_falco_bench \
   --corpus "$CORPUS" \
   --suite "$SUITE" \
   "${MATCH[@]}" \
-  --junit-out "$BENCH_DIR/no_falco.xml" \
+  --junit-out "$BENCH_DIR/verify.xml" \
   --log-file "$LOG"
 echo "run dir: $BENCH_DIR  (translations + log + JUnit + JSON)"
