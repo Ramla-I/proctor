@@ -18,9 +18,16 @@
 # builds in the one shared corpus workspace — it isn't concurrency-safe.
 #
 # The verbose build/harness output goes to a log; only a per-case summary (like
-# bench.sh) is printed. Each run is a single self-contained dir under out/
-# (out/bench-<suite>-<pid>-<stamp>) holding the per-case translations plus the
-# log, JUnit, and JSON. Override the log path with a *.log arg.
+# bench.sh) is printed. Each run is a single self-contained dir under out/,
+# owned by you: out/bench-<suite>-<pid>-<stamp>/, containing
+#
+#   <case>/stages/NN-<stage>/out/rust   the per-case translations, per stage
+#   bench.json    translation outcome — did each case translate (from bench CLI)
+#   verify.json   verification rollup  — vectors passed/skipped/failed per case
+#   verify.xml    verification JUnit   — raw per-vector record (standard JUnit)
+#   run.log       the full build + harness log
+#
+# Override the log path (only) with a *.log arg.
 #
 #   ./fetch_corpus.sh --no-falco                     # once: fetch the newer corpus
 #   ./bench_no_falco.sh B03_organic                  # whole suite

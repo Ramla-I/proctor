@@ -11,6 +11,13 @@
 #   ./bench.sh B02_organic arr_del_lib      # one case (name is a regex)
 #   ./bench.sh B02_organic arr_del_lib --all
 #   JOBS=8 ./bench.sh B01_synthetic
+#
+# Output: one dir per run under out/, chowned to you:
+# out/bench-<suite>-<timestamp>/, containing
+#   <case>/stages/NN-<stage>/out/rust   the per-case translations, per stage
+#   bench.json    per-case run status + vector results (vectors_ok / passed /
+#                 failed / total) — bench.sh translates and verifies in one step,
+#                 so both land in bench.json (no separate verify.* files)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
