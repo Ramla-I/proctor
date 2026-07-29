@@ -96,9 +96,14 @@ docker run --rm \
   --set bench.layout.c_project=. \
   --jobs "${JOBS:-16}" >>"$LOG" 2>&1
 
-# newest translation dir for this suite (created by the container)
+# newest translation dir for this suite (created by the container). It holds
+# the per-case, per-stage outputs (<case>/stages/NN-<stage>/out/rust) — the
+# same layout bench.sh produces. It's container-owned, so we can't write our
+# log/JUnit/JSON into it; link it into the results dir so everything's
+# reachable from one place.
 BENCH_DIR="$(ls -dt "$ROOT"/out/bench-"$SUITE"-* 2>/dev/null | head -1 || true)"
 [ -n "$BENCH_DIR" ] || { echo "error: translation produced no bench dir; see $LOG" >&2; exit 1; }
+ln -sfn "$BENCH_DIR" "$RESULTS/translations"
 
 # --- 2. verify each translation against the newer corpus, Falco-free --------
 echo ">> verifying against the newer corpus (--no-falco) ..."
@@ -109,3 +114,4 @@ uv run python -m proctor.testing.no_falco_bench \
   "${MATCH[@]}" \
   --junit-out "$RESULTS/no_falco.xml" \
   --log-file "$LOG"
+echo "translations: $RESULTS/translations  (-> $(basename "$BENCH_DIR"))"
