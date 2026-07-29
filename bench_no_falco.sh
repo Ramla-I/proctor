@@ -82,6 +82,10 @@ CONFIG="${CONFIG:-configs/c2rust_crat_absrec.toml}"
 TARGET="$SUITE"
 [ -n "$CASE" ] && TARGET="$SUITE/$CASE"
 echo ">> translating $TARGET  [$(basename "$CONFIG" .toml)] ..."
+# Don't let a non-zero translate exit (some case failed to translate — common
+# for B03) abort the script under `set -e`: we still want to chown the output
+# and verify whatever did translate. The final status comes from the verify.
+set +e
 docker run --rm \
   -e ANTHROPIC_API_KEY \
   -v "$CORPUS:/corpus:ro" \
@@ -95,6 +99,7 @@ docker run --rm \
   --set run.output_dir=/out \
   --set bench.layout.c_project=. \
   --jobs "${JOBS:-16}" >>"$LOG" 2>&1
+set -e
 
 # newest translation dir for this suite (created by the container). It holds
 # the per-case, per-stage outputs (<case>/stages/NN-<stage>/out/rust) — the
