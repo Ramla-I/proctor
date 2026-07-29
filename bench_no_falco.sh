@@ -61,6 +61,18 @@ command -v docker >/dev/null || { echo "error: docker not found" >&2; exit 1; }
 
 mkdir -p "$ROOT/out" && chmod 777 "$ROOT/out"
 
+# Serialize runs on this host: they stage into the one shared corpus
+# (translated_rust slots) and the newer harness removes its vector containers
+# by a shared label, so two runs at once on the same corpus corrupt each other
+# (cross-chowned bench dirs, containers pulled out from under each other). Take
+# an exclusive, non-blocking lock; fail fast if another run holds it.
+exec 9>"$ROOT/out/.bench_no_falco.lock"
+if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
+  echo "error: another bench_no_falco run is in progress (the corpus is shared)." >&2
+  echo "       wait for it to finish, then retry." >&2
+  exit 1
+fi
+
 # One host-owned results dir per run — holds the log, JUnit, and JSON. Made
 # up front (with its own timestamp) so the log can live here from the start;
 # the translation half's bench-* dir, created by the container, stays
