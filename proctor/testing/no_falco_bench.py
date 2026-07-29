@@ -270,7 +270,9 @@ def main(argv: list[str] | None = None) -> int:
     # owned by the container that ran the translation half.
     out_json = args.junit_out.resolve().parent / "bench_no_falco.json"
     out_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(f"\nwrote {out_json}")
+    print(f"\njson: {out_json}")
+    if args.log_file is not None:
+        print(f"log:  {args.log_file.resolve()}")
     return 0 if tot_f == 0 else 1
 
 
