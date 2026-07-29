@@ -1,31 +1,76 @@
 #!/usr/bin/env bash
-# Per-stage vector breakdown of a bench run (reads bench.json).
+# Per-case vector breakdown of a bench run. Handles both:
+#   - bench.sh runs          -> reads bench.json (per-stage vectors)
+#   - bench_no_falco.sh runs -> reads verify.json (the --no-falco results)
 #
 #   ./bench_report.sh                    # latest bench under out/
 #   ./bench_report.sh B02_organic        # latest bench for a suite
-#   ./bench_report.sh out/bench-B02_organic-20260728T161647   # a specific run
+#   ./bench_report.sh out/bench-B02_organic-...   # a specific run dir
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 arg="${1:-}"
 
+# Resolve the run directory.
 if [ -z "$arg" ]; then
-  bj=$(ls -dt "$ROOT"/out/bench-*/bench.json 2>/dev/null | head -1 || true)
+  run_dir=$(ls -dt "$ROOT"/out/bench-*/ 2>/dev/null | head -1 || true)
+elif [ -d "$arg" ]; then
+  run_dir="$arg"
 elif [ -f "$arg" ]; then
-  bj="$arg"
-elif [ -f "$arg/bench.json" ]; then
-  bj="$arg/bench.json"
+  run_dir=$(dirname "$arg")
 else
-  bj=$(ls -dt "$ROOT"/out/bench-"$arg"-*/bench.json 2>/dev/null | head -1 || true)
+  run_dir=$(ls -dt "$ROOT"/out/bench-"$arg"-*/ 2>/dev/null | head -1 || true)
 fi
+run_dir="${run_dir%/}"
 
-if [ -z "${bj:-}" ] || [ ! -f "$bj" ]; then
-  echo "no bench.json found (arg: '${arg:-<latest>}'); run ./bench.sh first" >&2
+if [ -z "${run_dir:-}" ] || [ ! -d "$run_dir" ]; then
+  echo "no bench run dir found (arg: '${arg:-<latest>}'); run ./bench.sh or ./bench_no_falco.sh first" >&2
   exit 1
 fi
 
-echo "bench: $bj"
-python3 - "$bj" <<'PY'
+# A bench_no_falco run has verify.json (vectors verified at host level, --no-falco);
+# a bench.sh run records vectors inside bench.json. Prefer verify.json.
+if [ -f "$run_dir/verify.json" ]; then
+  echo "verify (--no-falco): $run_dir/verify.json"
+  python3 - "$run_dir/verify.json" <<'PY'
+import json, sys
+
+d = json.load(open(sys.argv[1]))
+v = d.get("vectors", {})
+print("=" * 66)
+print(f"{d.get('suite', '?')}   {d['cases_ok']}/{d['cases_total']} cases clean   (--no-falco)")
+print("=" * 66)
+for c in sorted(d.get("cases", []), key=lambda c: c["case"]):
+    name = c["case"].split("/")[-1]
+    fs = c.get("fs_skipped", 0)
+    other = c.get("skipped", 0) - fs
+    total = c.get("passed", 0) + c.get("skipped", 0) + c.get("failed", 0)
+    notes = []
+    if fs:
+        notes.append(f"{fs} fs-skip")
+    if other:
+        notes.append(f"{other} skip")
+    if not c.get("build_ok", True):
+        notes.append("build-fail")
+    tail = "  (" + ", ".join(notes) + ")" if notes else ""
+    flag = "ok  " if c.get("ok") else "FAIL"
+    print(f"   [{flag}] {name:<28} {c.get('passed', 0)}/{total} pass, {c.get('failed', 0)} fail{tail}")
+print("-" * 66)
+P, S, F, FS = v.get("passed", 0), v.get("skipped", 0), v.get("failed", 0), v.get("fs_skipped", 0)
+rate = f"{100 * P / (P + F):.1f}%" if (P + F) else "n/a"
+print(f"{d['cases_ok']}/{d['cases_total']} cases clean   "
+      f"{P} pass, {F} fail, {S} skip ({FS} file-change)  ({rate})")
+PY
+  exit 0
+fi
+
+if [ ! -f "$run_dir/bench.json" ]; then
+  echo "no verify.json or bench.json in $run_dir" >&2
+  exit 1
+fi
+
+echo "bench: $run_dir/bench.json"
+python3 - "$run_dir/bench.json" <<'PY'
 import json, sys
 
 d = json.load(open(sys.argv[1]))
@@ -39,7 +84,8 @@ for c in d["cases"]:
     vs = c.get("vectors") or []
     print(c["name"])
     if not vs:
-        print("   (no vector verification)")
+        print("   (no vector verification — translation-only run;"
+              " for --no-falco runs see verify.json)")
         continue
     for v in vs:
         if v.get("error"):
