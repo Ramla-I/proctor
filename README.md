@@ -170,6 +170,29 @@ adds the LLM `abstraction_recovery` stage.
 programmatic entry point. See `plan_docs/falco_integration_notes.md` for the
 design, the exact `Test-Corpus` changes, and current verification results.
 
+### Measuring `unsafe` + idiomaticity
+
+Alongside correctness (vectors), score each translation's **safety** (`unsafe`
+usage) and **idiomaticity** (clippy lint density) — per stage, so you can see
+what each stage reduces. Both drive vendored authoritative tools (not
+reimplemented): DARPA's `measure_unsafety` (a `syn` scorer) and Yale's
+`measure_idiomaticity` (`cargo clippy`), under `tools/`.
+
+```bash
+./metrics.sh <rust_project>                 # one crate (Cargo.toml inside)
+./metrics.sh out/bench-.../array_list       # per stage (a run dir with stages/)
+./metrics.sh <crate> --no-idiomaticity      # unsafe only (no build/clippy)
+./metrics.sh <crate> --complexity           # + cognitive-complexity histogram
+./metrics.sh <crate> --json metrics.json    # also write JSON
+```
+
+Unsafe is **source-only** (no toolchain — works even if the crate doesn't
+build); idiomaticity runs **clippy**, so it needs the crate to build with
+clippy for its toolchain (the tool runs `rustup component add clippy` in the
+crate). A run dir prints a per-stage table with the reduction vs the first
+stage (c2rust → crat → …). See
+`plan_docs/{unsafe,idiomaticity}_evaluation_plan.md` for the tool survey.
+
 Experiments are config overlays — later files win, `--set` wins over all:
 
 ```bash

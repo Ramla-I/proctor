@@ -1,5 +1,16 @@
 # Evaluating `unsafe` usage after each translation stage — plan
 
+> **Status: implemented.** `proctor/testing/unsafe_eval.py` +
+> `proctor/testing/metrics.py` drive the vendored DARPA `measure_unsafety`
+> (`tools/measure_unsafety`); run `./metrics.sh <crate-or-run-dir>`. Note: on
+> inspection that DARPA tool is **syntactic** (a `syn` AST scorer with a
+> headline `unsafe_score`), not the semantic `UnsafeOpKind` this doc assumed —
+> but it *is* DARPA's own scoring tool, and being source-only it needs no
+> toolchain and runs even if the crate doesn't build. The semantic options
+> below (`find_unsafe2`, the corpus rustc patch) remain the upgrade path for
+> MIR-level operation counts. Verified per-stage: c2rust → crat on `arr_del_lib`
+> dropped the score 654 → 85 (−87%).
+
 Measure how much `unsafe` a translation carries, **after every
 Rust-producing stage** (c2rust → crat → abstraction_recovery → …), so we
 can track the reduction each stage achieves — the safety analogue of the
