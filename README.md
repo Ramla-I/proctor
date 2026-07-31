@@ -146,7 +146,9 @@ on the host (it can't run nested inside the framework container):
 # translation against the newer corpus at host level (Falco-free):
 ./bench_no_falco.sh B03_organic                      # whole suite
 ./bench_no_falco.sh B01_synthetic 001_helloworld     # one case (name is a regex)
-./bench_report.sh                                    # per-case breakdown of the latest run
+./bench_report.sh                                    # per-case vectors + unsafe + idiomaticity
+./bench_report.sh --no-idiomaticity                  # skip the per-case clippy build (vectors + unsafe)
+./bench_report.sh --no-metrics                       # vectors only (fast)
 
 # add the LLM abstraction_recovery stage (needs the claude CLI in the image,
 # which the Dockerfile installs, plus ANTHROPIC_API_KEY in your env):
@@ -192,6 +194,12 @@ clippy for its toolchain (the tool runs `rustup component add clippy` in the
 crate). A run dir prints a per-stage table with the reduction vs the first
 stage (c2rust → crat → …). See
 `plan_docs/{unsafe,idiomaticity}_evaluation_plan.md` for the tool survey.
+
+For a whole `--no-falco` run, `./bench_report.sh <suite>` folds these in
+directly: one row per case with its vectors **and** the final-stage `unsafe`
+score + clippy count (`--no-idiomaticity` to skip the clippy build,
+`--no-metrics` for vectors only). Use `metrics.sh` when you want the
+per-stage breakdown of a single case.
 
 Experiments are config overlays — later files win, `--set` wins over all:
 

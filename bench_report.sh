@@ -1,15 +1,32 @@
 #!/usr/bin/env bash
-# Per-case vector breakdown of a bench run. Handles both:
+# Per-case report of a bench run. Handles both:
+#   - bench_no_falco.sh runs -> reads verify.json (the --no-falco results),
+#     and ALSO computes each case's final-stage unsafe + idiomaticity
 #   - bench.sh runs          -> reads bench.json (per-stage vectors)
-#   - bench_no_falco.sh runs -> reads verify.json (the --no-falco results)
 #
-#   ./bench_report.sh                    # latest bench under out/
-#   ./bench_report.sh B02_organic        # latest bench for a suite
-#   ./bench_report.sh out/bench-B02_organic-...   # a specific run dir
+#   ./bench_report.sh                          # latest bench under out/
+#   ./bench_report.sh B03_organic              # latest bench for a suite
+#   ./bench_report.sh out/bench-B03_organic-.. # a specific run dir
+#
+# For --no-falco runs the report adds unsafe (fast, source-only) and
+# idiomaticity (clippy — builds each crate) of every case's final translation:
+#   --no-idiomaticity   vectors + unsafe only (skip the per-case clippy build)
+#   --no-metrics        vectors only (original fast report; no build at all)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-arg="${1:-}"
+
+arg=""
+metrics=1
+idiom_flag=""
+for a in "$@"; do
+  case "$a" in
+    --no-metrics) metrics=0 ;;
+    --no-idiomaticity) idiom_flag="--no-idiomaticity" ;;
+    -*) echo "unknown flag: $a" >&2; exit 2 ;;
+    *) arg="$a" ;;
+  esac
+done
 
 # Resolve the run directory.
 if [ -z "$arg" ]; then
@@ -27,10 +44,22 @@ if [ -z "${run_dir:-}" ] || [ ! -d "$run_dir" ]; then
   echo "no bench run dir found (arg: '${arg:-<latest>}'); run ./bench.sh or ./bench_no_falco.sh first" >&2
   exit 1
 fi
+run_dir="$(cd "$run_dir" && pwd)"  # absolute, so `cd $ROOT` below is safe
 
 # A bench_no_falco run has verify.json (vectors verified at host level, --no-falco);
 # a bench.sh run records vectors inside bench.json. Prefer verify.json.
 if [ -f "$run_dir/verify.json" ]; then
+  # Full report (vectors + unsafe + idiomaticity) needs cargo, via the drivers.
+  if [ "$metrics" -eq 1 ] && ! command -v cargo >/dev/null; then
+    echo "note: cargo not found — metrics need it; showing vectors only" >&2
+    metrics=0
+  fi
+  if [ "$metrics" -eq 1 ]; then
+    cd "$ROOT"
+    exec uv run python -m proctor.testing.suite_report "$run_dir" $idiom_flag
+  fi
+
+  # --no-metrics: original fast vectors-only report.
   echo "verify (--no-falco): $run_dir/verify.json"
   python3 - "$run_dir/verify.json" <<'PY'
 import json, sys
