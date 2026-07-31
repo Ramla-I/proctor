@@ -122,3 +122,35 @@ def test_count_fs_skips(tmp_path: Path) -> None:
         ["test_write", "test_read", "test1.json"],  # json = plain file vector
     )
     assert n == 1
+
+
+def _roll(
+    case: str, passed: int, failed: int, build_ok: bool = True
+) -> "nfb.CaseRollup":
+    return nfb.CaseRollup(case=case, passed=passed, failed=failed, build_ok=build_ok)
+
+
+def test_gate_keeps_absrec_when_not_regressing() -> None:
+    # abs_rec passes at least as many and fails no more than crat -> keep abs_rec
+    a = _roll("c", passed=10, failed=0)
+    c = _roll("c", passed=10, failed=0)
+    assert nfb.gate_decision(a, c) == ("abstraction_recovery", a)
+
+
+def test_gate_falls_back_on_fewer_passes() -> None:
+    a = _roll("c", passed=1, failed=9)
+    c = _roll("c", passed=10, failed=0)
+    stage, accepted = nfb.gate_decision(a, c)
+    assert stage == "crat" and accepted is c
+
+
+def test_gate_falls_back_on_build_fail() -> None:
+    a = _roll("c", passed=0, failed=0, build_ok=False)  # abs_rec didn't build
+    c = _roll("c", passed=15, failed=0)
+    stage, accepted = nfb.gate_decision(a, c)
+    assert stage == "crat" and accepted is c
+
+
+def test_gate_keeps_absrec_when_no_crat_baseline() -> None:
+    a = _roll("c", passed=3, failed=4)
+    assert nfb.gate_decision(a, None) == ("abstraction_recovery", a)

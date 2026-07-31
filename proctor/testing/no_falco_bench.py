@@ -52,10 +52,30 @@ def stage_translations(
         if not outputs:
             continue  # translation produced no runnable Rust (failed/incomplete)
         _, rust = outputs[-1]
-        slot = case_dir / "translated_rust"
-        if slot.exists():
-            shutil.rmtree(slot)
-        shutil.copytree(rust, slot)
+        _stage_rust(case_dir, rust)
+        staged.append(case)
+    return staged
+
+
+def _stage_rust(case_dir: Path, rust: Path) -> None:
+    """Drop ``rust`` into the corpus case's ``translated_rust`` slot."""
+    slot = case_dir / "translated_rust"
+    if slot.exists():
+        shutil.rmtree(slot)
+    shutil.copytree(rust, slot)
+
+
+def stage_cases(corpus: Path, suite: str, items: list[tuple[str, Path]]) -> list[str]:
+    """Stage a specific ``(case_leaf, rust_dir)`` into each corpus slot — the
+    gate uses this to re-stage the crat output for cases where
+    abstraction_recovery regressed. Returns the cases actually staged."""
+    suite_root = corpus / "Public-Tests" / suite
+    staged: list[str] = []
+    for case, rust in items:
+        case_dir = suite_root / case
+        if not (case_dir / "test_vectors").is_dir():
+            continue
+        _stage_rust(case_dir, rust)
         staged.append(case)
     return staged
 
@@ -138,6 +158,33 @@ class CaseRollup:
         return self.build_ok and self.failed == 0
 
 
+@dataclass
+class GatedRow:
+    """One case after the gate: which stage's result we accept, plus the
+    abstraction_recovery result even when it was rejected (for the note)."""
+
+    accepted: CaseRollup
+    stage: str  # "abstraction_recovery" or "crat"
+    absrec: CaseRollup
+
+
+def gate_decision(
+    absrec: CaseRollup, crat: CaseRollup | None
+) -> tuple[str, CaseRollup]:
+    """Accept the abstraction_recovery result unless it REGRESSES the crat
+    baseline — fails to build, passes fewer vectors, or fails more. On a
+    regression, keep crat: recovery may improve safety/idiomaticity but must
+    never cost correctness. With no crat baseline available, keep abs_rec."""
+    if crat is None:
+        return "abstraction_recovery", absrec
+    no_regress = (
+        absrec.build_ok
+        and absrec.passed >= crat.passed
+        and absrec.failed <= crat.failed
+    )
+    return ("abstraction_recovery", absrec) if no_regress else ("crat", crat)
+
+
 def rollup_junit(junit_path: Path) -> list[CaseRollup]:
     """Per-case pass/fail + skipped vector names from the newer harness's
     JUnit. Phase pseudo-tests (config/build/build-runners) drive
@@ -180,41 +227,38 @@ def count_fs_skips(corpus: Path, case_full: str, skipped_names: list[str]) -> in
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Verify a translated suite with tools/test_runner --no-falco"
-    )
-    ap.add_argument("--bench-dir", type=Path, required=True, help="bench output dir")
-    ap.add_argument("--corpus", type=Path, required=True, help="newer corpus root")
-    ap.add_argument("--suite", required=True, help="suite name, e.g. B03_organic")
-    ap.add_argument("--match", default=None, help="regex to select cases")
-    ap.add_argument("--junit-out", type=Path, required=True)
-    ap.add_argument(
-        "--log-file",
-        type=Path,
-        default=None,
-        help="append the harness's verbose output here instead of the console",
-    )
-    args = ap.parse_args(argv)
-
-    corpus = args.corpus.resolve()
-    staged = stage_translations(args.bench_dir, corpus, args.suite, args.match)
-    if not staged:
-        print("no translated cases to verify (translation failed for all?)")
-        return 1
-    print(f"verifying {len(staged)} translation(s) with tools/test_runner --no-falco")
-
-    proc = run_suite_no_falco(
-        corpus, args.suite, staged, args.junit_out, log_file=args.log_file
-    )
-    if not args.junit_out.is_file():
+def _verify(
+    corpus: Path,
+    suite: str,
+    cases: list[str],
+    junit_out: Path,
+    log_file: Path | None,
+) -> list[CaseRollup] | None:
+    """Run the --no-falco harness over ``cases`` and roll up the JUnit; None
+    if the harness produced no JUnit (its exit code is printed)."""
+    proc = run_suite_no_falco(corpus, suite, cases, junit_out, log_file=log_file)
+    if not junit_out.is_file():
         print(f"newer harness produced no JUnit (exit {proc.returncode})")
-        return 2
+        return None
+    return rollup_junit(junit_out)
 
-    rollups = rollup_junit(args.junit_out)
-    tot_p = tot_s = tot_fs = tot_f = n_ok = 0
+
+def _emit(
+    rows: list[GatedRow],
+    corpus: Path,
+    suite: str,
+    staged: list[str],
+    junit_out: Path,
+    log_file: Path | None,
+    gated: bool,
+) -> int:
+    """Print the per-case table + suite summary over the ACCEPTED results and
+    write ``<junit>.json``. In gate mode, a row that fell back to crat is
+    annotated with what abstraction_recovery scored."""
+    tot_p = tot_s = tot_fs = tot_f = n_ok = n_fallback = 0
     case_rows: list[dict] = []
-    for r in sorted(rollups, key=lambda r: r.case):
+    for row in sorted(rows, key=lambda x: x.accepted.case):
+        r = row.accepted
         leaf = r.case.split("/")[-1]
         fs = count_fs_skips(corpus, r.case, r.skipped_names)
         other = r.skipped - fs
@@ -226,6 +270,12 @@ def main(argv: list[str] | None = None) -> int:
             notes.append(f"{other} skip")
         if not r.build_ok:
             notes.append("build-fail")
+        if row.stage == "crat":
+            n_fallback += 1
+            a = row.absrec
+            a_total = a.passed + a.skipped + a.failed
+            a_str = f"{a.passed}/{a_total}" + ("" if a.build_ok else " build-fail")
+            notes.append(f"abs_rec {a_str} regressed → kept crat")
         tail = f"  ({', '.join(notes)})" if notes else ""
         print(
             f"  {'ok    ' if r.ok else 'FAILED'}  {leaf}  vectors {r.passed}/{total}{tail}"
@@ -244,20 +294,26 @@ def main(argv: list[str] | None = None) -> int:
                 "fs_skipped": fs,
                 "failed": r.failed,
                 "build_ok": r.build_ok,
+                "accepted_stage": row.stage,
             }
         )
-    print(
-        f"{n_ok}/{len(rollups)} cases ok  |  "
+    summary_line = (
+        f"{n_ok}/{len(rows)} cases ok  |  "
         f"vectors: {tot_p} pass, {tot_s} skip ({tot_fs} file-change), {tot_f} fail"
     )
+    if gated:
+        summary_line += f"  |  gate: {n_fallback} fell back to crat"
+    print(summary_line)
     if tot_fs:
         print("(fs-skip = file-change vector, needs Falco; skipped under --no-falco)")
 
     summary = {
-        "suite": args.suite,
+        "suite": suite,
         "staged": staged,
+        "gated": gated,
+        "fell_back": n_fallback,
         "cases_ok": n_ok,
-        "cases_total": len(rollups),
+        "cases_total": len(rows),
         "vectors": {
             "passed": tot_p,
             "skipped": tot_s,
@@ -268,12 +324,88 @@ def main(argv: list[str] | None = None) -> int:
     }
     # Next to the JUnit, sharing its stem (e.g. verify.xml -> verify.json), in
     # that host-writable dir.
-    out_json = args.junit_out.resolve().with_suffix(".json")
+    out_json = junit_out.resolve().with_suffix(".json")
     out_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"\njson: {out_json}")
-    if args.log_file is not None:
-        print(f"log:  {args.log_file.resolve()}")
+    if log_file is not None:
+        print(f"log:  {log_file.resolve()}")
     return 0 if tot_f == 0 else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Verify a translated suite with tools/test_runner --no-falco"
+    )
+    ap.add_argument("--bench-dir", type=Path, required=True, help="bench output dir")
+    ap.add_argument("--corpus", type=Path, required=True, help="newer corpus root")
+    ap.add_argument("--suite", required=True, help="suite name, e.g. B03_organic")
+    ap.add_argument("--match", default=None, help="regex to select cases")
+    ap.add_argument("--junit-out", type=Path, required=True)
+    ap.add_argument(
+        "--gate",
+        action="store_true",
+        help="accept abstraction_recovery only if it does not regress the crat "
+        "baseline; otherwise fall back to crat (re-verifies the non-clean cases)",
+    )
+    ap.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="append the harness's verbose output here instead of the console",
+    )
+    args = ap.parse_args(argv)
+
+    corpus = args.corpus.resolve()
+    staged = stage_translations(args.bench_dir, corpus, args.suite, args.match)
+    if not staged:
+        print("no translated cases to verify (translation failed for all?)")
+        return 1
+    print(f"verifying {len(staged)} translation(s) with tools/test_runner --no-falco")
+
+    absrec = _verify(corpus, args.suite, staged, args.junit_out, args.log_file)
+    if absrec is None:
+        return 2
+
+    rows = {r.case: GatedRow(r, "abstraction_recovery", r) for r in absrec}
+
+    if args.gate:
+        # For cases the final stage didn't nail, re-verify the crat baseline and
+        # keep whichever wins (crat on regression). Only the non-clean subset is
+        # re-run, so a clean suite costs nothing extra.
+        items: list[tuple[str, Path]] = []
+        for r in absrec:
+            if r.ok:
+                continue
+            leaf = r.case.split("/")[-1]
+            outs = stage_rust_outputs(args.bench_dir / leaf)
+            if len(outs) >= 2:  # need a prior (crat) stage to fall back to
+                items.append((leaf, outs[-2][1]))
+        if items:
+            print(
+                f"gate: re-verifying crat baseline for {len(items)} non-clean case(s)"
+            )
+            crat_junit = args.junit_out.with_name(
+                args.junit_out.stem + ".crat" + args.junit_out.suffix
+            )
+            staged_crat = stage_cases(corpus, args.suite, items)
+            crat = _verify(corpus, args.suite, staged_crat, crat_junit, args.log_file)
+            crat_by_leaf = {r.case.split("/")[-1]: r for r in (crat or [])}
+            for r in absrec:
+                if r.ok:
+                    continue
+                leaf = r.case.split("/")[-1]
+                stage, accepted = gate_decision(r, crat_by_leaf.get(leaf))
+                rows[r.case] = GatedRow(accepted, stage, r)
+
+    return _emit(
+        list(rows.values()),
+        corpus,
+        args.suite,
+        staged,
+        args.junit_out,
+        args.log_file,
+        args.gate,
+    )
 
 
 if __name__ == "__main__":

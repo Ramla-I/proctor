@@ -155,6 +155,11 @@ on the host (it can't run nested inside the framework container):
 # which the Dockerfile installs, plus ANTHROPIC_API_KEY in your env):
 CONFIG=configs/c2rust_crat_absrec.toml ./bench_no_falco.sh B03_organic array_list
 
+# --gate: accept abstraction_recovery only if it doesn't regress the vectors,
+# else fall back to crat (recovery keeps its safety/idiomaticity wins but can
+# never cost correctness). Recommended whenever abstraction_recovery is on:
+CONFIG=configs/c2rust_crat_absrec.toml ./bench_no_falco.sh B03_organic --gate
+
 # or verify a single case directly:
 ./no_falco_verify.sh Public-Tests/B03_organic/array_list          # C reference
 ./no_falco_verify.sh Public-Tests/B01_synthetic/001_helloworld <translated_rust>
@@ -167,6 +172,15 @@ cases translate in **parallel**; only the verify step serializes (TRACTOR's
 harness isn't concurrency-safe). Default config is a plain c2rust → crat
 translation (`configs/bench.toml`); `CONFIG=configs/c2rust_crat_absrec.toml`
 adds the LLM `abstraction_recovery` stage.
+
+**The `--gate` flag** makes `abstraction_recovery` safe to run: its only
+self-check is `cargo build`, which can't catch a transform that compiles but
+changes observable behavior (or the `extern "C"` ABI), so an over-eager
+recovery can *regress* the vectors. With `--gate`, each case the final stage
+didn't pass cleanly is re-verified against the previous stage (crat), and the
+result that doesn't regress is kept — so recovery keeps its safety/idiomaticity
+gains where it's correct and falls back to crat where it isn't. `verify.json`
+records the `accepted_stage` per case and how many `fell_back`.
 
 `bench_no_falco.sh` is the batch equivalent of `bench.sh` on the newer corpus;
 `proctor.testing.vector_harness.run_vectors_no_falco()` is the single-case

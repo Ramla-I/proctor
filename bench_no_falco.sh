@@ -45,8 +45,10 @@ shift
 
 CASE=""
 LOG=""
+GATE=""
 for arg in "$@"; do
   case "$arg" in
+    --gate) GATE="--gate" ;;   # accept abs_rec only if it doesn't regress crat
     --*) echo "unknown flag: $arg" >&2; exit 1 ;;
     *.log|*/*) LOG="$arg" ;;   # a log path (ends in .log or contains a slash)
     *) CASE="$arg" ;;          # a case name/regex
@@ -153,6 +155,7 @@ uv run python -m proctor.testing.no_falco_bench \
   --corpus "$CORPUS" \
   --suite "$SUITE" \
   "${MATCH[@]}" \
+  $GATE \
   --junit-out "$BENCH_DIR/verify.xml" \
   --log-file "$LOG"
 echo "run dir: $BENCH_DIR  (translations + log + JUnit + JSON)"
