@@ -111,6 +111,48 @@ def test_no_idiomaticity_skips_clippy(tmp_path: Path, monkeypatch, capsys) -> No
     assert "2 fs-skip" in out  # skip breakdown surfaced
 
 
+def test_per_stage_report(tmp_path: Path, monkeypatch, capsys) -> None:
+    # _write_case lays down two stages: c2rust then crat.
+    _write_case(tmp_path, "array_list")
+    _verify_json(
+        tmp_path,
+        [
+            {
+                "case": "Public-Tests/B03_organic/array_list",
+                "passed": 10,
+                "failed": 0,
+                "skipped": 0,
+                "fs_skipped": 0,
+                "ok": True,
+                "build_ok": True,
+            }
+        ],
+    )
+    # --per-stage drives metrics._measure, so patch there; scores halve per stage.
+    from proctor.testing import metrics
+
+    seq = {"n": 0}
+
+    def fake_unsafe(crate, **kw):
+        seq["n"] += 1
+        return _u(100 // seq["n"], 300)
+
+    monkeypatch.setattr(metrics, "measure_unsafe", fake_unsafe)
+    monkeypatch.setattr(
+        metrics,
+        "measure_idiomaticity",
+        lambda c, **kw: IdiomReport(by_group={"style": {"x": 20 // seq["n"]}}, loc=300),
+    )
+
+    rc = suite_report.main([str(tmp_path), "--per-stage"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "== array_list ==" in out
+    assert "c2rust" in out and "crat" in out  # every stage shown
+    assert "-50%" in out  # unsafe 100 -> 50 vs first stage
+    assert "suite totals" in out
+
+
 def test_missing_verify_json(tmp_path: Path, capsys) -> None:
     rc = suite_report.main([str(tmp_path)])
     assert rc == 1

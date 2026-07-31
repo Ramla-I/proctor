@@ -146,7 +146,8 @@ on the host (it can't run nested inside the framework container):
 # translation against the newer corpus at host level (Falco-free):
 ./bench_no_falco.sh B03_organic                      # whole suite
 ./bench_no_falco.sh B01_synthetic 001_helloworld     # one case (name is a regex)
-./bench_report.sh                                    # per-case vectors + unsafe + idiomaticity
+./bench_report.sh                                    # per-case vectors + final-stage unsafe + idiomaticity
+./bench_report.sh --per-stage                        # a per-stage table per case (c2rust -> crat -> ...)
 ./bench_report.sh --no-idiomaticity                  # skip the per-case clippy build (vectors + unsafe)
 ./bench_report.sh --no-metrics                       # vectors only (fast)
 
@@ -197,9 +198,12 @@ stage (c2rust → crat → …). See
 
 For a whole `--no-falco` run, `./bench_report.sh <suite>` folds these in
 directly: one row per case with its vectors **and** the final-stage `unsafe`
-score + clippy count (`--no-idiomaticity` to skip the clippy build,
-`--no-metrics` for vectors only). Use `metrics.sh` when you want the
-per-stage breakdown of a single case.
+score + clippy count. Add `--per-stage` for a table per case showing **every**
+stage (c2rust → crat → abstraction_recovery) with the reduction vs the first
+stage, plus suite totals — the suite-wide version of what `metrics.sh` prints
+for a single case. (`--no-idiomaticity` skips the clippy build; `--no-metrics`
+is vectors only. Vectors come from `verify.json`, which records the final
+translation only.)
 
 Experiments are config overlays — later files win, `--set` wins over all:
 

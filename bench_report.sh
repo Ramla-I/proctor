@@ -10,6 +10,8 @@
 #
 # For --no-falco runs the report adds unsafe (fast, source-only) and
 # idiomaticity (clippy — builds each crate) of every case's final translation:
+#   --per-stage         metrics for EVERY stage (c2rust -> crat -> ...) per case,
+#                       with the reduction vs the first stage, plus suite totals
 #   --no-idiomaticity   vectors + unsafe only (skip the per-case clippy build)
 #   --no-metrics        vectors only (original fast report; no build at all)
 set -euo pipefail
@@ -19,10 +21,12 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 arg=""
 metrics=1
 idiom_flag=""
+stage_flag=""
 for a in "$@"; do
   case "$a" in
     --no-metrics) metrics=0 ;;
     --no-idiomaticity) idiom_flag="--no-idiomaticity" ;;
+    --per-stage) stage_flag="--per-stage" ;;
     -*) echo "unknown flag: $a" >&2; exit 2 ;;
     *) arg="$a" ;;
   esac
@@ -56,7 +60,7 @@ if [ -f "$run_dir/verify.json" ]; then
   fi
   if [ "$metrics" -eq 1 ]; then
     cd "$ROOT"
-    exec uv run python -m proctor.testing.suite_report "$run_dir" $idiom_flag
+    exec uv run python -m proctor.testing.suite_report "$run_dir" $stage_flag $idiom_flag
   fi
 
   # --no-metrics: original fast vectors-only report.
