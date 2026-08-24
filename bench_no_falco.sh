@@ -105,6 +105,7 @@ echo ">> translating $TARGET  [$(basename "$CONFIG" .toml)] ..."
 set +e
 docker run --rm \
   -e ANTHROPIC_API_KEY \
+  -e OPENAI_API_KEY \
   -v "$CORPUS:/corpus:ro" \
   -v "$ROOT/out:/out" \
   -v "$ROOT/configs:/home/proctor/proctor/configs:ro" \
