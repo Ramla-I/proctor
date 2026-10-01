@@ -1,5 +1,12 @@
 # Evaluating idiomaticity after each translation stage — plan
 
+> **Status: implemented.** `proctor/testing/idiomaticity_eval.py` +
+> `proctor/testing/metrics.py` drive the vendored Yale `measure_idiomaticity`
+> (`tools/measure_idiomaticity`, `cargo clippy` + lint→group buckets, with a
+> cached lint map so it runs offline); run `./metrics.sh <crate-or-run-dir>`.
+> Needs the crate to build with clippy for its toolchain. Verified per-stage:
+> c2rust → crat on `arr_del_lib` dropped 226 → 31 clippy lints (−86%).
+
 Measure how *idiomatic* the Rust is **after every Rust-producing stage**
 (c2rust → crat → abstraction_recovery → …), the third axis alongside
 **correctness** (vectors) and **safety** (unsafe ops). c2rust output is
@@ -99,8 +106,9 @@ Add `proctor/testing/idiomaticity_eval.py`, analogous to
 
 A translation stage is only a genuine win if it **improves idiomaticity
 and reduces unsafe without breaking the vectors.** Vectors (the vector
-harness, `proctor/testing/`; deferred work in
-`falco_integration_notes.md`), unsafe (`unsafe_evaluation_plan.md`), and
+harness, `proctor/testing/`; the Falco-free newer-corpus verification is
+implemented — see `falco_integration_notes.md`), unsafe
+(`unsafe_evaluation_plan.md`), and
 idiomaticity (this doc) are the same per-stage pattern — drive the
 authoritative tool, compare across stages —
 and should share the bench plumbing and `bench.json` schema.

@@ -42,6 +42,15 @@ RUN apt-get update \
     zlib1g-dev \
  && rm -rf /var/lib/apt/lists/*
 
+# Claude Code CLI (Node 20), for the abstraction_recovery stage, which shells
+# out to `claude`. Auth is via ANTHROPIC_API_KEY passed at run time
+# (e.g. bench_no_falco.sh forwards it with `docker run -e ANTHROPIC_API_KEY`).
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @anthropic-ai/claude-code \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m proctor
 USER proctor
 WORKDIR /home/proctor

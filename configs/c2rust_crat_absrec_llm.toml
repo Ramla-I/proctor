@@ -1,0 +1,45 @@
+# Full component pipeline: C source -> c2rust -> CRAT -> abstraction recovery,
+# using the single-prompt LLM backend (OpenAI / GPT) instead of the Claude Code
+# agent. Same as c2rust_crat_absrec.toml but selects backend="llm".
+# Needs OPENAI_API_KEY in the environment (bench_no_falco.sh forwards it).
+
+[run]
+provides = ["c_project"]
+
+[testing]
+after_each_stage = false
+
+[pipeline]
+order = ["c2rust", "crat", "abstraction_recovery"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 600
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 900
+
+[stages.crat.config]
+passes = [
+  "expand",
+  "extern",
+  "preprocess",
+  "enum",
+  "simpl",
+  "unsafe",
+  "unexpand",
+  "split",
+  "bin",
+]
+
+[stages.abstraction_recovery]
+uses = "stages/abstraction-recovery"
+timeout_s = 2400
+
+[stages.abstraction_recovery.config]
+backend = "llm"
+llm_model = "gpt-5.6"
+max_candidates = 1
+max_repair_iterations = 3
+on_give_up = "skip"

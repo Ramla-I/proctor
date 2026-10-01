@@ -20,3 +20,4 @@ out/
 
 # TRACTOR corpus — fetch with ./fetch_corpus.sh, not committed
 tractor-test-corpus/
+tractor-test-corpus-newer/
