@@ -1,0 +1,85 @@
+# Pipeline: C source -> c2rust -> CRAT -> test generation -> abstraction
+# recovery -> discipline repair.
+#
+# A 5-stage run that merges upstream's c2rust_crat_testgen_disrep.toml (#7) with
+# the abstraction_recovery stage, inserted between test generation and discipline
+# repair. test_generation seals an immutable test oracle into the project;
+# abstraction_recovery rewrites one data structure (preserving the extern "C"
+# ABI, so the oracle should still pass); discipline_repair then fixes residual
+# Rust-discipline violations, gated by that oracle.
+#
+# Agents / keys (all OpenAI — one key):
+#   - test_generation + discipline_repair drive the opencode agent (its default)
+#     pinned to an OpenAI model; opencode reads OPENAI_API_KEY from the env.
+#   - abstraction_recovery drives the opencode agent on openai/gpt-5.6 (agentic;
+#     better at preserving the extern "C"/#[repr(C)] ABI than the single-shot llm).
+# Only OPENAI_API_KEY is needed; forwarded at run time (docker run -e OPENAI_API_KEY).
+# (Swap the agent model to openai/gpt-5.3-codex for the codex-tuned variant.)
+#
+# NOTE: `proctor run` does not gate abstraction_recovery on the oracle (that is a
+# bench-only feature). Re-run the sealed oracle after abstraction_recovery before
+# trusting discipline_repair's baseline.
+
+[run]
+provides = ["c_project"]
+
+[testing]
+after_each_stage = false
+
+[pipeline]
+order = ["c2rust", "crat", "test_generation", "abstraction_recovery", "discipline_repair"]
+
+[stages.c2rust]
+uses = "stages/c2rust-adapter"
+timeout_s = 600
+
+[stages.crat]
+uses = "stages/crat-adapter"
+timeout_s = 900
+
+[stages.crat.config]
+passes = [
+  "expand",
+  "extern",
+  "preprocess",
+  "enum",
+  "simpl",
+  "unsafe",
+  "unexpand",
+  "split",
+  "bin",
+]
+
+[stages.test_generation]
+uses = "stages/test-infrastructure"
+timeout_s = 1800
+
+[stages.test_generation.config]
+command = "generate"
+strategy = "cando2"
+target_kind = "bin"   # array_list is a CLI application; crat emits both a lib
+                      # and bin target, so auto-detection can't choose — pin it.
+agent = "opencode"
+model = "openai/gpt-5.6"
+attempts = 3
+min_coverage = 80.0
+
+[stages.abstraction_recovery]
+uses = "stages/abstraction-recovery"
+timeout_s = 2400
+
+[stages.abstraction_recovery.config]
+backend = "opencode"       # agentic (OpenAI credits), likelier to preserve the
+model = "openai/gpt-5.6"   # extern "C"/#[repr(C)] ABI than the single-shot llm.
+max_candidates = 1
+max_repair_iterations = 3
+on_give_up = "skip"
+
+[stages.discipline_repair]
+uses = "stages/discipline-repair"
+timeout_s = 1800
+
+[stages.discipline_repair.config]
+agent = "opencode"
+model = "openai/gpt-5.6"
+max_attempts_per_target = 2
