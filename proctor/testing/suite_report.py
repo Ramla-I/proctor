@@ -7,6 +7,10 @@ Two views:
   --per-stage   a table per case with EVERY stage (c2rust -> crat -> ...) and
                 the reduction vs the first stage, plus suite totals
 
+In --per-stage, a case that ran abstraction_recovery also gets the
+self-diagnostic recovery-quality panel (crat -> recovered): residual unsafe,
+retained C-idiom facade, ABI drift, and whether it would trip the quality gate.
+
 Unsafe is source-only (fast). Idiomaticity runs clippy, which builds each
 crate — skip it with --no-idiomaticity for a quick vectors+unsafe view.
 Vectors come from verify.json, which records the FINAL translation only.
@@ -23,6 +27,10 @@ from typing import Any
 
 from proctor.testing.idiomaticity_eval import IdiomEvalError, measure_idiomaticity
 from proctor.testing.metrics import StageMetrics, _measure, _pct
+from proctor.testing.recovery_quality import (
+    RecoveryQualityError,
+    measure_recovery_quality,
+)
 from proctor.testing.unsafe_eval import UnsafeEvalError, measure_unsafe
 from proctor.testing.vector_compare import stage_rust_outputs
 
@@ -99,7 +107,26 @@ def _final_report(vj: Path, d: dict[str, Any], do_idiom: bool) -> int:
     return 0
 
 
-def _print_case_stages(leaf: str, vcell: str, rows: list[StageMetrics]) -> None:
+def _recovery_line(outputs: list[tuple[str, Path]]) -> str | None:
+    """Self-diagnostic recovery-quality panel (crat -> recovered) for a case that
+    ran abstraction_recovery. Source-only + one recovery_metrics pass; best-effort
+    — returns None if the case has no such stage, a short note if the tools fail.
+    Scope is "touched" (grades only the files the transform changed)."""
+    stages = dict(outputs)
+    src, dst = stages.get("crat"), stages.get("abstraction_recovery")
+    if not src or not dst:
+        return None
+    try:
+        r = measure_recovery_quality(src, dst)
+    except (RecoveryQualityError, UnsafeEvalError, OSError):
+        return "recovery (crat -> recovered): n/a (tools unavailable)"
+    flag = "  GATE: repair" if r.needs_repair() else "  GATE: clean"
+    return f"recovery (crat -> recovered): {r.summary()}{flag}"
+
+
+def _print_case_stages(
+    leaf: str, vcell: str, rows: list[StageMetrics], recovery: str | None = None
+) -> None:
     """Compact per-stage table for one case (no repeated footer)."""
     u_scores = [r.unsafe.score for r in rows if r.unsafe]
     base_u = u_scores[0] if u_scores else 0
@@ -121,6 +148,8 @@ def _print_case_stages(leaf: str, vcell: str, rows: list[StageMetrics]) -> None:
         else:
             it = "-"
         print(f"  {r.stage:<22}{us:<26}{it:<18}{loc:>6}")
+    if recovery:
+        print(f"  {recovery}")
     print()
 
 
@@ -146,7 +175,9 @@ def _per_stage_report(vj: Path, d: dict[str, Any], do_idiom: bool) -> int:
             m = _measure(rust, do_idiom=do_idiom, complexity=False)
             m.stage = stage_id
             rows.append(m)
-        _print_case_stages(leaf, _vectors_cell(c), rows)
+        _print_case_stages(
+            leaf, _vectors_cell(c), rows, recovery=_recovery_line(outputs)
+        )
 
         if rows[0].unsafe and rows[-1].unsafe:
             first_u += rows[0].unsafe.score

@@ -9,6 +9,7 @@ import pytest
 
 from proctor.testing import suite_report
 from proctor.testing.idiomaticity_eval import IdiomReport
+from proctor.testing.recovery_quality import FileQuality, RecoveryQualityReport
 from proctor.testing.unsafe_eval import UnsafeReport
 
 
@@ -18,9 +19,11 @@ def _u(score: int, lines: int) -> UnsafeReport:
     )
 
 
-def _write_case(run: Path, leaf: str) -> None:
-    """A case dir with two stages, each a Cargo project (final = crat)."""
-    for ordinal, sid in (("00", "c2rust"), ("01", "crat")):
+def _write_case(
+    run: Path, leaf: str, stages=(("00", "c2rust"), ("01", "crat"))
+) -> None:
+    """A case dir with one Cargo project per stage (default final = crat)."""
+    for ordinal, sid in stages:
         rust = run / leaf / "stages" / f"{ordinal}-{sid}" / "out" / "rust"
         rust.mkdir(parents=True)
         (rust / "Cargo.toml").write_text("[package]\nname='x'\n", "utf-8")
@@ -151,6 +154,114 @@ def test_per_stage_report(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "c2rust" in out and "crat" in out  # every stage shown
     assert "-50%" in out  # unsafe 100 -> 50 vs first stage
     assert "suite totals" in out
+
+
+def test_per_stage_shows_recovery_quality(tmp_path: Path, monkeypatch, capsys) -> None:
+    # a case that ran abstraction_recovery (crat -> abstraction_recovery).
+    _write_case(
+        tmp_path,
+        "binary_heap_lib",
+        stages=(("00", "c2rust"), ("01", "crat"), ("02", "abstraction_recovery")),
+    )
+    _verify_json(
+        tmp_path,
+        [
+            {
+                "case": "Public-Tests/B03_organic/binary_heap_lib",
+                "passed": 12,
+                "failed": 0,
+                "skipped": 0,
+                "fs_skipped": 0,
+                "ok": True,
+                "build_ok": True,
+            }
+        ],
+    )
+    from proctor.testing import metrics
+
+    monkeypatch.setattr(metrics, "measure_unsafe", lambda c, **kw: _u(10, 300))
+    monkeypatch.setattr(
+        metrics,
+        "measure_idiomaticity",
+        lambda c, **kw: IdiomReport(by_group={}, loc=300),
+    )
+
+    seen: dict[str, Path] = {}
+
+    def fake_recovery(src: Path, dst: Path, **kw) -> RecoveryQualityReport:
+        seen["src"], seen["dst"] = src, dst
+        return RecoveryQualityReport(
+            src=str(src),
+            dst=str(dst),
+            touched_files=["src/binary_heap.rs"],
+            wandering_files=[],
+            abi_changed=[],
+            abi_removed=[],
+            abi_added=[],
+            files=[
+                FileQuality(
+                    file="src/binary_heap.rs",
+                    residual_unsafe=24,
+                    net_unsafe=-42,
+                    churn_added=79,
+                    churn_removed=97,
+                    raw_ptr_fields=1,
+                    into_from_raw=0,
+                    raw_derefs=6,
+                    malloc_free=2,
+                    non_boundary_unsafe=2,
+                    adopts_target=True,
+                    parse_ok=True,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(suite_report, "measure_recovery_quality", fake_recovery)
+
+    rc = suite_report.main([str(tmp_path), "--per-stage", "--no-idiomaticity"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "recovery (crat -> recovered):" in out
+    assert "residual unsafe 24" in out
+    assert "GATE: repair" in out  # facade signal (raw_ptr_fields + malloc_free) > 0
+    # measured crat -> abstraction_recovery (not c2rust)
+    assert seen["src"].parent.parent.name == "01-crat"
+    assert seen["dst"].parent.parent.name == "02-abstraction_recovery"
+
+
+def test_per_stage_no_recovery_line_without_absrec(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # a plain c2rust -> crat case must NOT call recovery_quality or print the line.
+    _write_case(tmp_path, "array_list")
+    _verify_json(
+        tmp_path,
+        [
+            {
+                "case": "Public-Tests/B03_organic/array_list",
+                "passed": 3,
+                "failed": 0,
+                "skipped": 0,
+                "fs_skipped": 0,
+                "ok": True,
+                "build_ok": True,
+            }
+        ],
+    )
+    from proctor.testing import metrics
+
+    monkeypatch.setattr(metrics, "measure_unsafe", lambda c, **kw: _u(5, 100))
+
+    def boom(*a, **k):
+        raise AssertionError(
+            "recovery_quality must not run without abstraction_recovery"
+        )
+
+    monkeypatch.setattr(suite_report, "measure_recovery_quality", boom)
+    rc = suite_report.main([str(tmp_path), "--per-stage", "--no-idiomaticity"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "recovery (crat -> recovered):" not in out
 
 
 def test_missing_verify_json(tmp_path: Path, capsys) -> None:
