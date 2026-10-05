@@ -153,3 +153,28 @@ def measure_unsafe(rust_project: Path, *, timeout_s: int = 300) -> UnsafeReport:
             f"measure_unsafety parsed none of {len(files)} file(s) under {rust_project}"
         )
     return UnsafeReport.from_stats(total, files_scanned=scanned, files_skipped=skipped)
+
+
+def measure_unsafe_file(rust_file: Path, *, timeout_s: int = 120) -> UnsafeReport:
+    """Score a SINGLE ``.rs`` file's ``unsafe`` usage (per-file residual).
+
+    The recovery-quality panel scores only the transform's *touched* files, so
+    it needs the per-file number the whole-crate ``measure_unsafe`` sums away.
+    Raises ``UnsafeEvalError`` if measure_unsafety can't parse the file."""
+    binary = ensure_built()
+    proc = subprocess.run(
+        [str(binary), "--file", str(rust_file)],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+    if proc.returncode != 0:
+        raise UnsafeEvalError(
+            f"measure_unsafety could not parse {rust_file}:\n"
+            f"{(proc.stderr or proc.stdout)[-500:]}"
+        )
+    try:
+        d = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise UnsafeEvalError(f"measure_unsafety gave non-JSON for {rust_file}") from e
+    return UnsafeReport.from_stats(d, files_scanned=1, files_skipped=0)
