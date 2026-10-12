@@ -68,6 +68,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 RUN rustup toolchain install nightly-2025-11-11 --profile minimal
 RUN cargo install --locked ripgrep cargo-llvm-cov cargo-nextest
 RUN rustup component add llvm-tools-preview
+# The discipline-repair analyzers (ptr_offset / axm_violation) are rustc_private
+# compiler plugins pinning this nightly + rustc-dev via their own
+# rust-toolchain.toml; bake it in so setup.sh's analyzer build during warmup
+# provisions deterministically instead of auto-installing mid-warmup.
+RUN rustup toolchain install nightly-2025-06-23 --component rustc-dev --component llvm-tools-preview
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
