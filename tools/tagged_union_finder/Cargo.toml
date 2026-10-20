@@ -1,0 +1,20 @@
+[package]
+name = "tagged_union_finder"
+version = "0.1.0"
+edition = "2021"
+
+# Symbolic detector for "fat struct" tagged unions: a struct with an
+# enum-discriminant field (+ per-variant payload fields) that an LLM scan tends
+# to miss in a large crate (the AST/IR node idiom, e.g. chibicc's Node). Purely
+# syntactic (syn), deps match measure_unsafety / recovery_metrics so it builds
+# offline from the shared cargo cache.
+[dependencies]
+clap = { version = "4.5.37", features = ["derive"] }
+proc-macro2 = { version = "1.0.95", features = ["span-locations"] }
+quote = "1.0.40"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+syn = { version = "2.0.101", features = ["full", "visit"] }
+
+[profile.release]
+strip = true
