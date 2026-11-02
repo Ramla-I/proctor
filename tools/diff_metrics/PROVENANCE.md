@@ -2,11 +2,7 @@
 
 Written for PROCTOR (not vendored). Unlike `tools/measure_unsafety` and
 `tools/measure_idiomaticity` — third-party scorers we vendor unmodified — this
-crate is ours and may be edited in place. Started from the unmerged
-`recovery_metrics` (branch `feedback_metrics`); the stage-specific structural
-signals that tool had (raw-pointer fields, `into_raw`/`from_raw`, malloc/free,
-collection adoption) were dropped — they serve abstraction_recovery's LLM
-feedback and live with that stage.
+crate is ours and may be edited in place.
 
 ## What it is
 
