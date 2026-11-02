@@ -1,54 +1,91 @@
 # Original: `diff_metrics`
 
-Written for PROCTOR (not vendored). Unlike `tools/measure_unsafety` and
-`tools/measure_idiomaticity` — third-party scorers we vendor unmodified — this
-crate is ours and may be edited in place.
+Written for PROCTOR, not vendored. `tools/measure_unsafety` and
+`tools/measure_idiomaticity` are third-party tools we keep unmodified; this
+crate is ours and can be edited freely.
 
 ## What it is
 
-A **stage-neutral before/after diff** of two Rust crates — normally a stage's
-input (the previous stage's `out/rust`) and its output — so every PROCTOR stage
-is measured the same way. Purely syntactic (`syn` v2): no name resolution, no
-type inference, no build. Unreadable inputs (a missing directory, an unreadable
-file, a missing or invalid `Cargo.toml`, an unreadable `--api` file) are errors
-(exit 2), never an empty or clean report.
+PROCTOR runs a pipeline of stages (c2rust, CRAT, abstraction recovery, …), and
+each stage rewrites a Rust crate. To compare stages fairly, every stage must be
+measured the same way, independent of what the stage reports about itself.
+`diff_metrics` does that. It takes a stage's input crate (the previous stage's
+`out/rust`) and its output crate, and reports two things: how much code the
+stage changed, and whether the stage kept the library's C ABI.
 
-It reports (`schema_version: 3`):
+The tool reads source code only. It does not build the crate, resolve names or
+infer types, so it also works on a crate that does not compile.
 
-- **totals** — `files_changed`, `lines_added`, `lines_removed`, `touched_files`;
-- **per changed file** — `status`, `lines_added`, `lines_removed`, `rustfmt_ok`;
-- **targets** — for each side, the Cargo targets, and `unreachable_files` that no
-  target compiles;
-- **abi** — exported symbols `removed` / `added` / `changed`,
+If it cannot read an input, it stops with an error message and exit code 2. It
+never reports "nothing changed" because a directory, a file, `Cargo.toml` or
+the `--api` file was missing or unreadable.
+
+The JSON output (`schema_version: 3`) contains:
+
+- **totals**: `files_changed`, `lines_added`, `lines_removed`, `touched_files`;
+- **files**: for each changed file, its `status`, `lines_added`,
+  `lines_removed` and `rustfmt_ok`;
+- **targets**: for each crate, its Cargo targets and the `unreachable_files`
+  that no target compiles;
+- **abi**: exported symbols that were `removed`, `added` or `changed`,
   `removed_bin_internal`, `types_changed`, `duplicate_symbols`,
   `unparsed_files`, the `c_type_model` used, and an overall `ok`.
 
 ## How lines are counted (`src/churn.rs`)
 
-Both sides of a file whose text differs are run through `rustfmt` first, then
-compared as a multiset of trimmed, non-blank lines: `lines_added` = lines in
-after beyond before, `lines_removed` the reverse. A pure reformat is zero churn
-and moving lines is not churn. A file whose lines are the same multiset in a
-different order has status **`reordered`**: it counts in `files_changed` with 0
-lines added and removed. If rustfmt is missing or rejects a file, raw text is
-compared and the file says `rustfmt_ok: false`. This is a churn measure, **not**
-an edit distance.
+We want to know how much code a stage actually rewrote. A stage that only
+reformats code or moves functions around has not rewritten anything, so that
+should not count as change.
+
+The tool first runs `rustfmt` on both versions of each file whose text differs,
+so formatting differences disappear. It then strips leading and trailing
+whitespace from every line and drops blank lines. Finally it compares the two
+versions as unordered collections of lines:
+
+- `lines_added` is the number of lines in the new version that the old version
+  does not have;
+- `lines_removed` is the number of lines in the old version that the new
+  version does not have.
+
+Because order is ignored, moving a line is not counted as a change. This is
+called churn. It is not an edit distance like `git diff`, which would count a
+moved line once as removed and once as added.
+
+A file whose lines are all the same but in a different order gets the status
+`reordered`. It counts towards `files_changed`, with 0 lines added and 0
+removed. The other statuses are `modified`, `added` and `removed`.
+
+If `rustfmt` is not installed or fails on a file, the tool compares the raw
+text instead and marks that file with `rustfmt_ok: false`. `--no-rustfmt`
+always compares raw text.
 
 ## Which files belong to which target (`src/layout.rs`)
 
-A crate can build several artifacts: the library, whose exported symbols are
-the ABI C code links against, and binaries, whose exports are no one's API. A
-symbol a stage stops exporting is a break only if the library exported it, and
-a file no target compiles exports nothing. So each file must be attributed to
-the targets that actually compile it.
+A crate can build several artifacts, which Cargo calls targets: one library and
+any number of binaries. The library's exported symbols are the ABI that C code
+links against. A binary's exported symbols are not anyone's API. So when a
+stage stops exporting a symbol, it is a break only if the library exported it.
+A file that no target compiles exports nothing at all. The tool therefore needs
+to know which targets compile each file.
 
-Targets come from `Cargo.toml`: `[lib]`, `[[bin]]`, and Cargo's defaults
-(`src/lib.rs`, `src/main.rs`, `src/bin/*` unless `autobins = false`). Each
-target's files are found by following `mod` declarations from its root —
-`x.rs` / `x/mod.rs`, inline `mod x { .. }`, `#[path]` — as rustc does. So a
-library module that happens to define `fn main` is library code, and a binary
-module without `main` is binary code. Not handled: `#[cfg]` (every `mod` is
-followed) and `include!`.
+It finds this the way Cargo and rustc do:
+
+1. It reads each target's root file from `Cargo.toml`: the `path` of `[lib]`
+   and of each `[[bin]]`. Without an explicit path it uses Cargo's defaults:
+   `src/lib.rs` for the library, and `src/main.rs` and `src/bin/*.rs` for
+   binaries (unless `autobins = false`).
+2. From each root file it follows the `mod` declarations to every file that
+   target compiles. `mod x;` loads `x.rs` or `x/mod.rs`. Inline
+   `mod x { ... }` blocks and `#[path = "..."]` attributes are followed too.
+3. Every `.rs` file that no target reaches is listed in `unreachable_files`,
+   and its exports are ignored.
+
+This means a library file that happens to contain a `fn main`, such as c2rust's
+`src/main.rs`, is still library code. A binary's helper file without `main` is
+still binary code.
+
+The tool does not evaluate `#[cfg(...)]`; it follows every `mod` declaration.
+It also does not follow `include!`.
 
 ## How the ABI is compared (`src/abi.rs`)
 
@@ -59,6 +96,10 @@ exported, the signature of each exported symbol, and the layout of the types
 those signatures use.
 
 ### Exported symbols
+
+C code can only call what the library exports. If a stage stops exporting a
+function that C code calls, the program no longer links. So the tool first
+finds every exported symbol in both crates and compares the two sets.
 
 A function or static is exported when it has `#[no_mangle]` or
 `#[export_name = "name"]` (or the `#[unsafe(no_mangle)]` form). The tool tracks
@@ -75,6 +116,11 @@ symbol, the tool lists it under `removed_bin_internal` and does not count it as
 a break.
 
 ### Signatures
+
+C code calls an exported function exactly as the header declares it. If a
+stage changes a parameter or return type, C still passes the old types, and the
+function reads the wrong values. So for every symbol both crates export, the
+tool compares the signatures.
 
 For each exported function the tool compares the calling convention, the
 parameter types, whether it is variadic, and the return type. For an exported
@@ -181,16 +227,24 @@ or alignment, and does not look at what a function does with its arguments. It
 reports changes that may break the ABI. It does not prove that the ABI is
 compatible.
 
-## Build / run
+## Build and run
 
-- `cargo build --release` → `target/release/diff_metrics` (`proctor.testing.diff_eval`
-  builds it on first use). Deps are `measure_unsafety`'s set plus `toml` 0.8;
-  the first build may need to fetch `toml` and its dependencies.
-- `diff_metrics --before <crate> --after <crate> [--api <file>] [--no-rustfmt]`
-  → JSON on stdout; errors on stderr with exit 2.
-- `cargo test`: input errors, churn and `reordered`, rustfmt fallback, Cargo
-  target and module-tree resolution (incl. c2rust's layout), export detection,
-  signature normalization (aliases, 1-tuples, trailing commas, `unsafe`),
-  structural layout comparison (field order/type/repr, generic renames,
-  `int_to_enum`, opaque vs public behind pointers, forward declarations), `--api`
-  parsing.
+Python callers (`proctor.testing.diff_eval`) build the tool automatically the
+first time they need it. To build it by hand, run `cargo build --release`; the
+binary is `target/release/diff_metrics`. It depends on the same crates as
+`measure_unsafety` plus `toml`, which the first build may download.
+
+Run it as:
+
+    diff_metrics --before <crate dir> --after <crate dir> [--api <file>] [--no-rustfmt]
+
+It prints the JSON report on stdout. On an error it prints a message on stderr
+and exits with code 2.
+
+`cargo test` runs the unit tests. They cover input errors, line counting
+(including `reordered` and the rustfmt fallback), finding targets and following
+the module tree (including c2rust's layout), detecting exports, comparing
+signatures (aliases, one-element tuples, trailing commas, `unsafe`), comparing
+layouts (field order, field type and `#[repr]` changes, renamed generic types,
+`int_to_enum`, opaque and public types behind pointers, forward declarations),
+and reading the `--api` file.
