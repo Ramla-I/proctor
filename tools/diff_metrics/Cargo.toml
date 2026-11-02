@@ -3,14 +3,11 @@ name = "diff_metrics"
 version = "0.1.0"
 edition = "2021"
 
-# Symbolic structural passes for abstraction_recovery quality (before/after a
-# recovered crate): facade pre-filter (raw-pointer fields / into_raw|from_raw /
-# malloc|free / std-collection adoption), extern "C" / #[no_mangle] ABI diff,
-# per-file churn, and the touched-file set. Unsafe counts live in
-# measure_unsafety; clippy lints in measure_idiomaticity; a caller composes them.
+# Stage-neutral before/after diff of two crates: files and lines changed
+# (rustfmt-normalized) and the exported-symbol ABI (signatures + reachable type
+# layouts). See PROVENANCE.md.
 #
-# Deps deliberately match measure_unsafety's set (already in the cargo cache) so
-# this builds offline with `cargo build --release --offline`.
+# Deps match measure_unsafety's set, plus toml for reading Cargo targets.
 [dependencies]
 clap = { version = "4.5.37", features = ["derive"] }
 proc-macro2 = { version = "1.0.95", features = ["span-locations"] }
@@ -18,6 +15,7 @@ quote = "1.0.40"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 syn = { version = "2.0.101", features = ["full", "visit"] }
+toml = "0.8"
 
 [profile.release]
 strip = true
