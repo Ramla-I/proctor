@@ -52,61 +52,134 @@ followed) and `include!`.
 
 ## How the ABI is compared (`src/abi.rs`)
 
-**Exported symbols** are items with `#[no_mangle]` or `#[export_name = "…"]`
-(including the `#[unsafe(…)]` forms): functions and statics, keyed by symbol
-name. `extern "C"` alone is a calling convention, not an export; it is part of
-the signature, so dropping it from an export is a change. Symbols exported by a
-binary target are not library ABI: one that disappears is listed under
-`removed_bin_internal`, not `removed`.
+C code calls the Rust library through the symbols it exports. A stage keeps the
+ABI only if C code compiled against the original header still works with the
+new library. The tool checks three things, in order: which symbols are
+exported, the signature of each exported symbol, and the layout of the types
+those signatures use.
 
-**Signatures** — calling convention, parameter types (or the static's type),
-variadic, return type — are built as a type tree from the syntax, so `(T,)` (a
-1-tuple) stays distinct from `(T)` while trailing commas and spacing don't
-matter. Not part of the signature: parameter names and patterns, `unsafe`,
-lifetimes, `-> ()`. Crate type aliases (`type X = Y;`, non-generic and
-unambiguous) are expanded, and C type names (`size_t`, `c_int`, `c_long`,
-`c_char`, `int32_t`, …, and `usize`/`isize`) map to the fixed-width primitive
-they denote on the target in `c_type_model`. That model is the target the tool
-is compiled for — `c_char` signedness and `c_long`/pointer width differ between
-targets, e.g. `c_char` is `i8` on x86-64 Linux and `u8` on aarch64 Linux — which
-is the target the pipeline builds and tests the crate on.
+### Exported symbols
 
-**Layouts.** The C ABI is structural, so crate types are compared by layout,
-not by name: `#[repr]`, field names, order and types with generic arguments
-substituted, enum variants and discriminants. Every crate type reached from an
-exported signature is compared, through fields, pointers, arrays and generic
-arguments; recursion through recursive types is cut by remembering compared
-pairs. Consequences:
+A function or static is exported when it has `#[no_mangle]` or
+`#[export_name = "name"]` (or the `#[unsafe(no_mangle)]` form). The tool tracks
+each export by its symbol name, which is the function's own name for
+`#[no_mangle]` and the given name for `#[export_name]`.
 
-- a stage that replaces `struct list_int_t { head, size }` with a generic
-  `List<i32>` of the same layout keeps the ABI;
-- a reordered field, a changed field type or `#[repr]` is a `types_changed`
-  entry (named `old -> new` when the type was also renamed);
-- an integer that became a fieldless enum whose `#[repr]` is that integer
-  (`u32` → `#[repr(u32)] enum cc_stat`) is reported with kind `int_to_enum` and
-  is **not** breaking: it is the same in the C ABI, but Rust now assumes C only
-  passes listed values — a contract the vector tests exercise, not this tool;
-- c2rust's forward declarations (`extern { type T; }`) merge with T's
-  definition; several *distinct* definitions under one name (path resolution
-  would be needed to tell them apart) are compared as a set.
+`extern "C"` on its own does not export anything. It only sets the calling
+convention. The tool records it as part of the signature, so a stage that
+removes `extern "C"` from an exported function changes that function's
+signature.
 
-A layout change is **breaking** when the type is reached by value, when
-`--api` lists it as a `type` (the C headers define its body, so C code may read
-its fields), or when there is no `--api` to tell. A change to a type C only
-handles through a pointer and the headers keep opaque is reported but not
-breaking. `abi.ok` is false if any library symbol was removed or changed, any
-layout change is breaking, a symbol is exported twice, or a compiled file did
-not parse.
+Only the library's exports are ABI. If a binary target stops exporting a
+symbol, the tool lists it under `removed_bin_internal` and does not count it as
+a break.
 
-**`--api <file>`** — one entry per line: `symbol NAME` (or a bare `NAME`) for an
-exported function or global, `type NAME` for a type whose layout the headers
-define. c2rust exports every non-`static` C function, and CRAT internalizes the
-ones the header doesn't declare; without `--api` those count as removed.
+### Signatures
 
-**Limits.** No `#[cfg]` evaluation, no path resolution (types are identified by
-their last path segment), no size/alignment computation, no check of what a
-function does with its arguments. It is a conservative change detector over
-symbols, signatures and declared layouts — not a proof of ABI compatibility.
+For each exported function the tool compares the calling convention, the
+parameter types, whether it is variadic, and the return type. For an exported
+static it compares the static's type and whether it is `mut`.
+
+These differences do not change the ABI, so the tool ignores them:
+
+- parameter names and patterns: `fn f(mut x: i32)` and `fn f(y: i32)` match;
+- `unsafe`: it is a promise inside Rust, not part of the call;
+- lifetimes, and `-> ()` versus no return type;
+- spacing and trailing commas.
+
+The tool compares parsed types, not text. So `(T,)`, a one-element tuple, is
+still different from `(T)`, which is just `T`.
+
+Two kinds of type names are resolved before comparing:
+
+- **Type aliases in the crate.** `type size_t = c_ulong;` is replaced by
+  `c_ulong`. Only aliases without generic parameters are expanded, and only when
+  the crate defines the name one way.
+- **C type names.** `size_t`, `c_int`, `c_long`, `c_char`, `int32_t` and similar
+  names, as well as `usize` and `isize`, are replaced by the fixed-size Rust
+  integer they stand for. So a stage that rewrites `c_int` as `i32` does not
+  change the signature.
+
+Some C types have a different size on different machines. `c_long` is 64 bits on
+Linux x86-64 and 32 bits on Windows, and `c_char` is signed on x86-64 Linux but
+unsigned on ARM Linux. The tool uses the sizes of the machine it was compiled
+on, which is the machine that builds and tests the crate. The JSON output lists
+the sizes it used under `abi.c_type_model`.
+
+### Type layouts
+
+A function's signature can stay the same while the struct it takes changes.
+C code reads a struct's fields at fixed byte offsets, so swapping two fields
+breaks it even though the signature looks identical. The tool therefore also
+compares every crate type that an exported signature uses, either directly or
+through fields, pointers, arrays and generic arguments.
+
+C only sees bytes, not Rust type names. So the tool compares two types by their
+layout:
+
+- the `#[repr(...)]` attributes;
+- for a struct or union, the field names, their order and their types;
+- for an enum, the variants, their fields and their discriminant values.
+
+Generic arguments are filled in before comparing. A stage that replaces
+`struct list_int_t { head: *mut node_int, len: usize }` with a generic
+`List<i32>` that has the same fields therefore keeps the ABI. Recursive types
+such as `struct Node { next: *mut Node }` are handled by remembering which pairs
+of types have already been compared.
+
+Each type whose layout differs is listed under `abi.types_changed`. If the stage
+also renamed the type, the entry is named `old -> new`.
+
+Two special cases:
+
+- **Integer to enum.** CRAT sometimes turns a `u32` status code into a
+  `#[repr(u32)]` enum with no fields. C passes both the same way, so this is
+  reported with kind `int_to_enum` and is not a break. The Rust side does now
+  assume C only passes values the enum lists; the tests check that, this tool
+  does not.
+- **Forward declarations.** c2rust emits `extern "C" { type T; }` for a struct
+  it only sees declared, next to the full `struct T` from another file. The tool
+  treats the declaration and the definition as one type.
+
+### When a layout change is a break
+
+C code can only depend on a layout it can see. A layout change is a break when:
+
+- the type is passed or returned by value, or is a field of such a type; or
+- the C header defines the type's body, so C code may read its fields. You tell
+  the tool this with a `type NAME` line in the `--api` file; or
+- no `--api` file was given, so the tool cannot tell and assumes the worst.
+
+A type that C only handles through a pointer, and that the header leaves
+opaque (`typedef struct list list;`), can change freely. Abstraction recovery
+relies on this, for example to replace a linked list's fields with a `Vec`.
+The tool reports such a change but does not count it as a break.
+
+`abi.ok` is false when an exported library symbol was removed or its signature
+changed, a layout change is a break, the library exports the same symbol twice,
+or a file the crate compiles did not parse.
+
+### The `--api` file
+
+c2rust exports every C function that is not `static`, including helpers the
+header never declares. A later stage such as CRAT makes those helpers private,
+which is not a break. The `--api` file limits the check to the real public API.
+It has one entry per line:
+
+- `symbol NAME` (or just `NAME`): an exported function or global the header
+  declares;
+- `type NAME`: a type whose body the header defines.
+
+Blank lines and lines starting with `#` are ignored.
+
+### Limits
+
+The tool reads source code only. It does not evaluate `#[cfg]`, does not
+resolve paths (it identifies a type by its last path segment, so two types with
+the same name in different modules are treated as one), does not compute sizes
+or alignment, and does not look at what a function does with its arguments. It
+reports changes that may break the ABI. It does not prove that the ABI is
+compatible.
 
 ## Build / run
 
