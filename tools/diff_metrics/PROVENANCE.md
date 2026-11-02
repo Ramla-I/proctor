@@ -36,6 +36,12 @@ an edit distance.
 
 ## Which files belong to which target (`src/layout.rs`)
 
+A crate can build several artifacts: the library, whose exported symbols are
+the ABI C code links against, and binaries, whose exports are no one's API. A
+symbol a stage stops exporting is a break only if the library exported it, and
+a file no target compiles exports nothing. So each file must be attributed to
+the targets that actually compile it.
+
 Targets come from `Cargo.toml`: `[lib]`, `[[bin]]`, and Cargo's defaults
 (`src/lib.rs`, `src/main.rs`, `src/bin/*` unless `autobins = false`). Each
 target's files are found by following `mod` declarations from its root —
