@@ -148,12 +148,27 @@ def ensure_crat_built(crat_dir: Path, log_file: Path) -> Path:
     head = git_head(crat_dir)
     if binary.is_file() and marker.is_file() and marker.read_text().strip() == head:
         return binary
-    run_logged(["cargo", "build"], log_file, cwd=crat_dir / "deps_crate")
+    # deps_crate provides the dependencies crat compiles the translated crate
+    # against. Newer crat looks for them under deps_crate/target/<host>/ (an
+    # explicit --target build, per crat's README); older crat under
+    # deps_crate/target/debug/. Build both, so either crat version works.
+    deps = crat_dir / "deps_crate"
+    run_logged(["cargo", "build"], log_file, cwd=deps)
+    run_logged(["cargo", "build", "--target", host_tuple(deps)], log_file, cwd=deps)
     run_logged(["cargo", "build", "--release", "--bin", "crat"], log_file, cwd=crat_dir)
     if not binary.is_file():
         raise StageFailure(f"crat build produced no binary at {binary}")
     marker.write_text(head + "\n", encoding="utf-8")
     return binary
+
+
+def host_tuple(cwd: Path) -> str:
+    """The host target triple of the toolchain that applies in ``cwd``."""
+    out = subprocess.check_output(["rustc", "-vV"], cwd=cwd, text=True)
+    for line in out.splitlines():
+        if line.startswith("host:"):
+            return line.split(":", 1)[1].strip()
+    raise StageFailure(f"`rustc -vV` reported no host triple:\n{out}")
 
 
 def crat_env(crat_dir: Path) -> dict[str, str]:

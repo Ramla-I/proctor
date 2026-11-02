@@ -339,3 +339,31 @@ def test_run_stage_rejects_non_boolean_check_build(tmp_path: Path) -> None:
 def test_invalid_pass_config_is_rejected(config: dict, message: str) -> None:
     with pytest.raises(ADAPTER.StageFailure, match=message):
         ADAPTER.resolve_pass_plan(config)
+
+
+def test_build_compiles_deps_crate_for_old_and_new_crat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Newer crat finds deps_crate's dependencies under target/<host>/ (an
+    # explicit --target build); older crat under target/debug/. Build both.
+    crat = tmp_path / "crat"
+    (crat / "deps_crate").mkdir(parents=True)
+    commands: list[tuple[list[str], Path | None]] = []
+
+    def fake_run_logged(
+        command: list[str], *_a: object, cwd: Path | None = None, **_k: object
+    ) -> None:
+        commands.append((command, cwd))
+        if "--bin" in command:
+            (crat / "target" / "release").mkdir(parents=True, exist_ok=True)
+            (crat / "target" / "release" / "crat").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(ADAPTER, "run_logged", fake_run_logged)
+    monkeypatch.setattr(ADAPTER, "git_head", lambda _repo: "abc123")
+    monkeypatch.setattr(ADAPTER, "host_tuple", lambda _cwd: "x86_64-unknown-linux-gnu")
+    ADAPTER.ensure_crat_built(crat, tmp_path / "log")
+    deps = [c for c, cwd in commands if cwd == crat / "deps_crate"]
+    assert deps == [
+        ["cargo", "build"],
+        ["cargo", "build", "--target", "x86_64-unknown-linux-gnu"],
+    ]
