@@ -5,7 +5,10 @@ Companion to ``bench_no_falco.sh``. After ``bench`` has translated a suite
 Rust into the newer TRACTOR corpus and verifies the selected cases with the
 corpus's own orchestrator (``tools/test_runner --no-falco`` — newer cando2,
 rustc 1.94.1, B03) in a host-level ``nix run`` (``--gate`` adds a second run
-that re-verifies the ``crat`` baseline for cases the recovery didn't pass).
+that re-verifies the ``crat`` baseline for cases the recovery didn't pass;
+``--gate=prefix`` then also verifies abstraction_recovery's per-candidate
+checkpoints where the recovery regressed, and keeps the longest run of them
+that doesn't).
 
 This runs at HOST level (the orchestrator spawns a Docker container per
 vector); it needs ``nix`` and ``docker`` on PATH — see ``bench_no_falco.sh``,
@@ -161,30 +164,80 @@ class CaseRollup:
 
 
 @dataclass
+class Checkpoint:
+    """abstraction_recovery's crate after its ``index``-th applied candidate."""
+
+    index: int
+    kind: str
+    function: str
+    rust: Path
+
+
+@dataclass
 class GatedRow:
     """One case after the gate: which stage's result we accept, plus the
-    abstraction_recovery result even when it was rejected (for the note)."""
+    abstraction_recovery result even when it was rejected (for the note).
+    Under the prefix gate, ``checkpoint`` is the accepted checkpoint's index
+    (None when the whole stage or crat was accepted) and ``steps`` records
+    every checkpoint that was verified."""
 
     accepted: CaseRollup
     stage: str  # the accepted stage's id, e.g. "crat" or "abstraction_recovery"
     absrec: CaseRollup
+    checkpoint: int | None = None
+    steps: list[dict[str, Any]] = field(default_factory=list)
+
+
+def regresses(result: CaseRollup, crat: CaseRollup) -> bool:
+    """Whether ``result`` is worse than the crat baseline: it fails to build,
+    passes fewer vectors, or fails more."""
+    return not (
+        result.build_ok
+        and result.passed >= crat.passed
+        and result.failed <= crat.failed
+    )
 
 
 def gate_decision(
     absrec: CaseRollup, crat: CaseRollup | None
 ) -> tuple[str, CaseRollup]:
     """Accept the abstraction_recovery result unless it REGRESSES the crat
-    baseline — fails to build, passes fewer vectors, or fails more. On a
-    regression, keep crat: recovery may improve safety/idiomaticity but must
-    never cost correctness. With no crat baseline available, keep abs_rec."""
-    if crat is None:
+    baseline. On a regression, keep crat: recovery may improve
+    safety/idiomaticity but must never cost correctness. With no crat
+    baseline available, keep abs_rec."""
+    if crat is None or not regresses(absrec, crat):
         return "abstraction_recovery", absrec
-    no_regress = (
-        absrec.build_ok
-        and absrec.passed >= crat.passed
-        and absrec.failed <= crat.failed
-    )
-    return ("abstraction_recovery", absrec) if no_regress else ("crat", crat)
+    return "crat", crat
+
+
+def prefix_length(steps: list[CaseRollup], crat: CaseRollup) -> int:
+    """How many leading checkpoints don't regress crat. Each candidate was
+    applied on top of the ones before it, so a later checkpoint can't be kept
+    without the earlier ones: the first regression ends the prefix."""
+    for i, step in enumerate(steps):
+        if regresses(step, crat):
+            return i
+    return len(steps)
+
+
+def read_checkpoints(rust: Path) -> list[Checkpoint]:
+    """The checkpoints abstraction_recovery listed for the stage whose output is
+    ``rust`` (``<stage>/out/rust``), in order; [] if it listed none or a
+    listed checkpoint is missing."""
+    stage_dir = rust.parent.parent
+    try:
+        meta = json.loads((stage_dir / "stage_output.json").read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    out: list[Checkpoint] = []
+    for cp in (meta.get("metadata") or {}).get("checkpoints") or []:
+        path = rust.parent / "artifacts" / str(cp.get("path", ""))
+        if not (path / "Cargo.toml").is_file():
+            return []
+        out.append(
+            Checkpoint(int(cp["index"]), str(cp["kind"]), str(cp["function"]), path)
+        )
+    return out
 
 
 def rollup_junit(junit_path: Path) -> list[CaseRollup]:
@@ -261,7 +314,7 @@ def _emit(
     """Print the per-case table + suite summary over the ACCEPTED results and
     write ``<junit>.json``. In gate mode, a row that fell back to crat is
     annotated with what abstraction_recovery scored."""
-    tot_p = tot_s = tot_fs = tot_f = n_ok = n_fallback = 0
+    tot_p = tot_s = tot_fs = tot_f = n_ok = n_fallback = n_partial = 0
     case_rows: list[dict[str, Any]] = []
     for row in sorted(rows, key=lambda x: x.accepted.case):
         r = row.accepted
@@ -276,13 +329,19 @@ def _emit(
             notes.append(f"{other} skip")
         if not r.build_ok:
             notes.append("build-fail")
-        if gated and row.accepted is not row.absrec:
+        a = row.absrec
+        a_total = a.passed + a.skipped + a.failed
+        a_str = f"{a.passed}/{a_total}" + ("" if a.build_ok else " build-fail")
+        if gated and row.checkpoint is not None:
+            n_partial += 1
+            notes.append(
+                f"abs_rec {a_str} regressed → kept checkpoint {row.checkpoint} "
+                f"of {len(row.steps)}"
+            )
+        elif gated and row.accepted is not row.absrec:
             # gate fell back to crat because abstraction_recovery regressed
             # (distinct accepted/absrec objects only happen on a real fallback).
             n_fallback += 1
-            a = row.absrec
-            a_total = a.passed + a.skipped + a.failed
-            a_str = f"{a.passed}/{a_total}" + ("" if a.build_ok else " build-fail")
             notes.append(f"abs_rec {a_str} regressed → kept crat")
         tail = f"  ({', '.join(notes)})" if notes else ""
         print(
@@ -303,6 +362,8 @@ def _emit(
                 "failed": r.failed,
                 "build_ok": r.build_ok,
                 "accepted_stage": row.stage,
+                "accepted_checkpoint": row.checkpoint,
+                "checkpoints": row.steps,
             }
         )
     summary_line = (
@@ -311,6 +372,8 @@ def _emit(
     )
     if gated:
         summary_line += f"  |  gate: {n_fallback} fell back to crat"
+        if n_partial:
+            summary_line += f", {n_partial} kept a checkpoint"
     print(summary_line)
     if tot_fs:
         print("(fs-skip = file-change vector, needs Falco; skipped under --no-falco)")
@@ -320,6 +383,7 @@ def _emit(
         "staged": staged,
         "gated": gated,
         "fell_back": n_fallback,
+        "kept_checkpoint": n_partial,
         "cases_ok": n_ok,
         "cases_total": len(rows),
         "vectors": {
@@ -340,6 +404,77 @@ def _emit(
     return 0 if tot_f == 0 else 1
 
 
+def _prefix_gate(
+    args: argparse.Namespace,
+    corpus: Path,
+    rows: dict[str, GatedRow],
+    crat_by_leaf: dict[str, CaseRollup],
+) -> None:
+    """For each case whose recovery regressed crat and that has more than one
+    checkpoint, verify the checkpoints before the last (the last is the
+    stage's output, already verified) and accept the longest run of them that
+    doesn't regress. The harness takes one crate per case per run, so round
+    ``j`` verifies every such case's ``j``-th checkpoint together."""
+    pending: dict[str, list[Checkpoint]] = {}
+    for case, row in rows.items():
+        leaf = case.split("/")[-1]
+        crat = crat_by_leaf.get(leaf)
+        outs = stage_rust_outputs(args.bench_dir / leaf)
+        if crat is None or not outs or not regresses(row.absrec, crat):
+            continue
+        cps = read_checkpoints(outs[-1][1])
+        if len(cps) > 1:
+            pending[case] = cps
+    if not pending:
+        return
+    results: dict[str, list[CaseRollup | None]] = {c: [] for c in pending}
+    for j in range(max(len(cps) for cps in pending.values()) - 1):
+        items = [
+            (case.split("/")[-1], cps[j].rust)
+            for case, cps in pending.items()
+            if j < len(cps) - 1
+        ]
+        print(f"gate: verifying checkpoint {j + 1} for {len(items)} case(s)")
+        junit = args.junit_out.with_name(
+            f"{args.junit_out.stem}.cp{j + 1}{args.junit_out.suffix}"
+        )
+        staged = stage_cases(corpus, args.suite, items)
+        got = _verify(corpus, args.suite, staged, junit, args.log_file) or []
+        by_leaf = {r.case.split("/")[-1]: r for r in got}
+        for leaf, _ in items:
+            case = f"Public-Tests/{args.suite}/{leaf}"
+            results[case].append(by_leaf.get(leaf))
+    for case, cps in pending.items():
+        row, crat = rows[case], crat_by_leaf[case.split("/")[-1]]
+        verified = results[case]
+        if any(r is None for r in verified):
+            continue  # a round produced no result for this case: keep the stage gate
+        steps = [r for r in verified if r is not None] + [row.absrec]
+        n = prefix_length(steps, crat)
+        records = [
+            {
+                "index": cp.index,
+                "kind": cp.kind,
+                "function": cp.function,
+                "passed": step.passed,
+                "failed": step.failed,
+                "build_ok": step.build_ok,
+                "regressed": regresses(step, crat),
+            }
+            for cp, step in zip(cps, steps)
+        ]
+        if n == 0:
+            rows[case] = GatedRow(crat, "crat", row.absrec, None, records)
+        else:
+            rows[case] = GatedRow(
+                steps[n - 1],
+                "abstraction_recovery",
+                row.absrec,
+                cps[n - 1].index,
+                records,
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Verify a translated suite with tools/test_runner --no-falco"
@@ -351,9 +486,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--junit-out", type=Path, required=True)
     ap.add_argument(
         "--gate",
-        action="store_true",
+        nargs="?",
+        const="stage",
+        choices=["stage", "prefix"],
+        default=None,
         help="accept abstraction_recovery only if it does not regress the crat "
-        "baseline; otherwise fall back to crat (re-verifies the non-clean cases)",
+        "baseline; otherwise fall back to crat (re-verifies the non-clean "
+        "cases). --gate=prefix instead keeps the longest run of the stage's "
+        "per-candidate checkpoints that doesn't regress",
     )
     ap.add_argument(
         "--log-file",
@@ -411,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
                 leaf = r.case.split("/")[-1]
                 stage, accepted = gate_decision(r, crat_by_leaf.get(leaf))
                 rows[r.case] = GatedRow(accepted, stage, r)
+            if args.gate == "prefix":
+                _prefix_gate(args, corpus, rows, crat_by_leaf)
 
     return _emit(
         list(rows.values()),
@@ -419,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         staged,
         args.junit_out,
         args.log_file,
-        args.gate,
+        args.gate is not None,
     )
 
 

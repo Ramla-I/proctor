@@ -2,6 +2,8 @@
 corpus and rolling up the newer harness's per-case JUnit. The real nix-run
 is exercised by bench_no_falco.sh, not here."""
 
+import argparse
+import json
 from pathlib import Path
 
 from proctor.testing import no_falco_bench as nfb
@@ -154,3 +156,88 @@ def test_gate_falls_back_on_build_fail() -> None:
 def test_gate_keeps_absrec_when_no_crat_baseline() -> None:
     a = _roll("c", passed=3, failed=4)
     assert nfb.gate_decision(a, None) == ("abstraction_recovery", a)
+
+
+# --- prefix gate ------------------------------------------------------------------
+
+
+def test_prefix_length_stops_at_the_first_regression() -> None:
+    crat = _roll("c", passed=10, failed=0)
+    good, bad = _roll("c", 10, 0), _roll("c", 9, 1)
+    assert nfb.prefix_length([good, good, bad, good], crat) == 2
+    assert nfb.prefix_length([bad, good], crat) == 0
+    assert nfb.prefix_length([good, good], crat) == 2
+    assert nfb.regresses(_roll("c", 10, 0, build_ok=False), crat)
+
+
+def _absrec_case(bench: Path, case: str, n_checkpoints: int) -> Path:
+    """A bench case whose abstraction_recovery stage lists ``n_checkpoints``."""
+    _bench_case(bench, case)
+    _bench_case(bench, case, stage="02-abstraction_recovery")
+    stage = bench / case / "stages" / "02-abstraction_recovery"
+    cps = []
+    for i in range(1, n_checkpoints + 1):
+        rel = f"checkpoints/{i:02d}-vec-f{i}"
+        cp = stage / "out" / "artifacts" / rel
+        cp.mkdir(parents=True)
+        (cp / "Cargo.toml").write_text("[package]\nname='x'\n", "utf-8")
+        cps.append({"index": i, "kind": "vec", "function": f"f{i}", "path": rel})
+    meta = {"metadata": {"checkpoints": cps}}
+    (stage / "stage_output.json").write_text(json.dumps(meta), "utf-8")
+    return stage / "out" / "rust"
+
+
+def test_read_checkpoints_in_order(tmp_path: Path) -> None:
+    rust = _absrec_case(tmp_path, "heap", 3)
+    cps = nfb.read_checkpoints(rust)
+    assert [c.index for c in cps] == [1, 2, 3]
+    assert cps[0].rust.name == "01-vec-f1"
+    assert (
+        nfb.read_checkpoints(tmp_path / "heap" / "stages" / "01-crat" / "out" / "rust")
+        == []
+    )
+
+
+def test_prefix_gate_keeps_the_last_checkpoint_before_a_regression(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bench, corpus, suite = tmp_path / "bench", tmp_path / "corpus", "B03"
+    _absrec_case(bench, "heap", 3)
+    _corpus_case(corpus, suite, "heap")
+    case = f"Public-Tests/{suite}/heap"
+    crat = _roll(case, passed=10, failed=0)
+    final = _roll(case, passed=7, failed=3)  # checkpoint 3 = the stage output
+    by_round = {"cp1": _roll(case, 10, 0), "cp2": _roll(case, 6, 4)}
+    monkeypatch.setattr(nfb, "stage_cases", lambda c, s, items: [i[0] for i in items])
+    monkeypatch.setattr(
+        nfb,
+        "_verify",
+        lambda corpus, suite, cases, junit, log: [by_round[junit.stem.split(".")[-1]]],
+    )
+    args = argparse.Namespace(
+        bench_dir=bench, suite=suite, junit_out=tmp_path / "verify.xml", log_file=None
+    )
+    rows = {case: nfb.GatedRow(crat, "crat", final)}  # the stage gate fell back
+    nfb._prefix_gate(args, corpus, rows, {"heap": crat})
+    row = rows[case]
+    assert row.stage == "abstraction_recovery" and row.checkpoint == 1
+    assert row.accepted is by_round["cp1"]
+    assert [s["regressed"] for s in row.steps] == [False, True, True]
+
+
+def test_prefix_gate_leaves_a_non_regressing_recovery_alone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bench, corpus, suite = tmp_path / "bench", tmp_path / "corpus", "B03"
+    _absrec_case(bench, "heap", 3)
+    case = f"Public-Tests/{suite}/heap"
+    final = _roll(case, passed=8, failed=2)
+    crat = _roll(case, passed=8, failed=2)  # same failures as crat: no regression
+    calls: list[str] = []
+    monkeypatch.setattr(nfb, "_verify", lambda *a: calls.append("verify"))
+    args = argparse.Namespace(
+        bench_dir=bench, suite=suite, junit_out=tmp_path / "verify.xml", log_file=None
+    )
+    rows = {case: nfb.GatedRow(final, "abstraction_recovery", final)}
+    nfb._prefix_gate(args, corpus, rows, {"heap": crat})
+    assert calls == [] and rows[case].checkpoint is None
