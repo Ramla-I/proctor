@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -28,7 +29,7 @@ import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 STAGE_ID = "c2rust"
 STAGE_VERSION = "0.2.0"
@@ -185,6 +186,247 @@ class Artifact:
     artifact_type: str
     sources: list[Path]
     link_args: list[str]
+
+
+@dataclass(frozen=True)
+class TargetSelection:
+    target_name: str
+    target_kind: str  # "executable" | "library"
+    bin_name: str | None
+    extra_libs: list[str]
+
+
+def _is_library_case(item: str | None, c_project: Path | None) -> bool:
+    """TRACTOR marks library cases with a '_lib' suffix or a runner/ directory."""
+    if item and item.endswith("_lib"):
+        return True
+    if c_project:
+        for p in (c_project, c_project.parent):
+            if (p / "runner").is_dir():
+                return True
+    return False
+
+
+def _find_runner_library(c_project: Path | None) -> str | None:
+    """Read expected library from runner/src/main.rs (library: "<name>")."""
+    if not c_project:
+        return None
+    for candidate in (
+        c_project / "runner" / "src" / "main.rs",
+        c_project.parent / "runner" / "src" / "main.rs",
+    ):
+        if candidate.is_file():
+            content = candidate.read_text(encoding="utf-8", errors="ignore")
+            m = re.search(r'library:\s*"([^"]+)"', content)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _resolve_intrinsic(
+    executables: list[Artifact], libraries: list[Artifact]
+) -> TargetSelection | None:
+    """Layer 1: Resolve if project files unambiguously build exactly one artifact."""
+    if len(executables) == 1 and len(libraries) == 0:
+        return TargetSelection(
+            target_name=executables[0].name,
+            target_kind="executable",
+            bin_name=executables[0].name,
+            extra_libs=[],
+        )
+    if len(libraries) == 1 and len(executables) == 0:
+        return TargetSelection(
+            target_name=libraries[0].name,
+            target_kind="library",
+            bin_name=None,
+            extra_libs=[],
+        )
+    return None
+
+
+def _resolve_from_config(
+    targets: list[Artifact],
+    libraries: list[Artifact],
+    config: dict[str, Any],
+) -> TargetSelection | None:
+    """Layer 2a: Resolve using explicit configuration overrides."""
+    cfg_name = config.get("target_name")
+    if not (isinstance(cfg_name, str) and cfg_name):
+        return None
+    matching = next((t for t in targets if t.name == cfg_name), None)
+    if not matching:
+        return None
+
+    cfg_kind = config.get("target_kind")
+    kind = cfg_kind or (
+        "executable" if matching.artifact_type == "EXECUTABLE" else "library"
+    )
+    bin_name = matching.name if kind == "executable" else None
+    extra_libs = [t.name for t in libraries if t.name != matching.name]
+    return TargetSelection(
+        target_name=matching.name,
+        target_kind=kind,
+        bin_name=bin_name,
+        extra_libs=extra_libs,
+    )
+
+
+def _match_by_name(candidates: list[Artifact], item: str | None) -> str | None:
+    """Match candidate targets against benchmark item name (exact or token match)."""
+    if not item:
+        return None
+    # Exact match (e.g. bin2hex_lib)
+    exact = next((t.name for t in candidates if t.name == item), None)
+    if exact is not None:
+        return exact
+    # Word-boundary or token match (e.g. 'blake' in '053_blake_...')
+    matching = [
+        t.name
+        for t in candidates
+        if re.search(rf"\b{re.escape(t.name)}\b", item) or f"_{t.name}_" in f"_{item}_"
+    ]
+    return max(matching, key=len) if matching else None
+
+
+def _disambiguate_library_target(
+    libraries: list[Artifact],
+    item: str | None,
+    c_project: Path | None,
+) -> str | None:
+    """Disambiguate primary library target among multiple shared libraries."""
+    # 1. Runner declaration
+    runner_lib = _find_runner_library(c_project)
+    if runner_lib:
+        matching = next((t.name for t in libraries if t.name == runner_lib), None)
+        if matching is not None:
+            return matching
+
+    # 2. Item name match
+    name_match = _match_by_name(libraries, item)
+    if name_match is not None:
+        return name_match
+
+    # 3. Single library among hybrid targets
+    if len(libraries) == 1:
+        return libraries[0].name
+
+    return None
+
+
+def _disambiguate_executable_target(
+    executables: list[Artifact],
+    item: str | None,
+) -> str | None:
+    """Disambiguate primary executable target among executable candidates."""
+    if len(executables) == 1:
+        return executables[0].name
+    return _match_by_name(executables, item)
+
+
+def _resolve_by_conventions(
+    executables: list[Artifact],
+    libraries: list[Artifact],
+    item: str | None,
+    c_project: Path | None,
+) -> TargetSelection | None:
+    """Layer 2b: Resolve multi-target projects using benchmark intent conventions."""
+    is_lib = _is_library_case(item, c_project)
+    if not is_lib and len(executables) == 0 and len(libraries) > 0:
+        is_lib = True
+
+    if is_lib:
+        if not libraries:
+            raise StageFailure(
+                f"Benchmark '{item or 'unknown'}' indicates a library case, "
+                f"but project builds only executables: {[t.name for t in executables]}"
+            )
+        target_name = _disambiguate_library_target(libraries, item, c_project)
+        if target_name:
+            extra_libs = [t.name for t in libraries if t.name != target_name]
+            return TargetSelection(
+                target_name=target_name,
+                target_kind="library",
+                bin_name=None,
+                extra_libs=extra_libs,
+            )
+    else:
+        if not executables:
+            raise StageFailure(
+                f"Benchmark '{item or 'unknown'}' indicates an executable case, "
+                f"but project builds only libraries: {[t.name for t in libraries]}"
+            )
+        target_name = _disambiguate_executable_target(executables, item)
+        if target_name:
+            extra_libs = [t.name for t in libraries]
+            return TargetSelection(
+                target_name=target_name,
+                target_kind="executable",
+                bin_name=target_name,
+                extra_libs=extra_libs,
+            )
+
+    return None
+
+
+def _fail_ambiguous(targets: list[Artifact], item: str | None) -> NoReturn:
+    """Layer 3: Fail fast when ambiguous targets cannot be resolved."""
+    target_descriptions = [f"{t.name} ({t.artifact_type})" for t in targets]
+    raise StageFailure(
+        f"Ambiguous targets in C project: {', '.join(target_descriptions)}. "
+        f"Could not disambiguate target under test using config, runner, or naming conventions "
+        f"for case '{item or 'unknown'}'."
+    )
+
+
+def select_target(
+    targets: list[Artifact],
+    item: str | None = None,
+    c_project: Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> TargetSelection:
+    """Select the primary target to transpile and categorize target kind.
+
+    Layer 1 (Project Files Alone):
+      If the C project unambiguously builds only one executable (and 0 libraries)
+      or only one library (and 0 executables), resolve immediately without consulting
+      any external conventions or metadata.
+
+    Layer 2 (External Disambiguation):
+      If the C project is multi-target (e.g. builds both executables and shared libraries,
+      or multiple libraries), disambiguate the intended benchmark target using:
+        1. Explicit configuration (config["target_name"] / config["target_kind"])
+        2. Benchmark intent conventions:
+           - Directory suffix '_lib' or presence of runner/ package -> library
+           - Runner package specification (runner/src/main.rs: library: "<name>")
+           - Item name token matching (e.g. 'blake' in '053_blake_...')
+           - Binary intent when no '_lib' suffix and executables exist
+
+    Layer 3 (Fail Fast):
+      If targets remain ambiguous and cannot be resolved, raise StageFailure.
+    """
+    if not targets:
+        raise StageFailure("cmake codemodel reports no executable or library targets")
+
+    executables = [t for t in targets if t.artifact_type == "EXECUTABLE"]
+    libraries = [t for t in targets if t.artifact_type == "SHARED_LIBRARY"]
+
+    # Layer 1: Intrinsic project files (unambiguous)
+    selection = _resolve_intrinsic(executables, libraries)
+    if selection is not None:
+        return selection
+
+    # Layer 2: External disambiguation (multi-target / hybrid)
+    if config:
+        selection = _resolve_from_config(targets, libraries, config)
+        if selection is not None:
+            return selection
+
+    selection = _resolve_by_conventions(executables, libraries, item, c_project)
+    if selection is not None:
+        return selection
+
+    # Layer 3: Fail fast
+    _fail_ambiguous(targets, item)
 
 
 def _unique[T](values: list[T]) -> list[T]:
@@ -401,12 +643,15 @@ def run_stage(envelope: dict[str, Any]) -> dict[str, Any]:
     ]
     commands_file.write_text(json.dumps(filtered, indent=2) + "\n", encoding="utf-8")
 
-    bin_name = next((t.name for t in targets if t.artifact_type == "EXECUTABLE"), None)
-    target_name = bin_name or targets[0].name
-    shared_names = [t.name for t in targets if t.artifact_type == "SHARED_LIBRARY"]
-    extra_libs = (
-        shared_names if bin_name else [n for n in shared_names if n != target_name]
+    selection = select_target(
+        targets,
+        item=envelope.get("item"),
+        c_project=Path(c_project),
+        config=config,
     )
+    target_name = selection.target_name
+    bin_name = selection.bin_name
+    extra_libs = selection.extra_libs
 
     # 4. transpile
     started = time.monotonic()
@@ -461,7 +706,7 @@ def run_stage(envelope: dict[str, Any]) -> dict[str, Any]:
             "transpiler": str(transpiler),
             "targets": len(targets),
             "target_name": target_name,
-            "target_kind": "executable" if bin_name else "library",
+            "target_kind": selection.target_kind,
             "c_sources": len(filtered),
             "exposed_fns": len(exposed),
             **timings,
