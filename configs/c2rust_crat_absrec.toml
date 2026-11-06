@@ -44,6 +44,5 @@ uses = "stages/abstraction-recovery"
 timeout_s = 2400
 
 [stages.abstraction_recovery.config]
-max_candidates = 1
 max_repair_iterations = 3
 on_give_up = "skip"

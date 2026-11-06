@@ -49,6 +49,7 @@ GATE=""
 for arg in "$@"; do
   case "$arg" in
     --gate) GATE="--gate" ;;   # accept abs_rec only if it doesn't regress crat
+    --gate=prefix) GATE="--gate=prefix" ;;   # else keep its longest non-regressing checkpoint run
     --*) echo "unknown flag: $arg" >&2; exit 1 ;;
     *.log|*/*) LOG="$arg" ;;   # a log path (ends in .log or contains a slash)
     *) CASE="$arg" ;;          # a case name/regex
